@@ -8,28 +8,34 @@
 </head>
 <body>
 
+    <!-- OVERLAYS (Always Visible) -->
+    <div id="global-timer">10:00</div>
+
+    <div id="score-left" class="score-board">
+        <div class="score-label">HOME</div>
+        <div class="score-val" id="score-val-left">0</div>
+    </div>
+
+    <div id="score-right" class="score-board">
+        <div class="score-label">GUEST</div>
+        <div class="score-val" id="score-val-right">0</div>
+    </div>
+
     <!-- 1. THE WHEEL STAGE -->
     <div id="wheel-stage" class="stage">
         <div class="wheel-wrapper">
-            <!-- The Red Triangle at Top -->
             <div class="indicator" id="indicator"></div>
             <canvas id="wheelCanvas" width="600" height="600"></canvas>
-
-            <!-- REPLACED BUTTON WITH PASSIVE HUB -->
             <div class="wheel-hub"></div>
         </div>
     </div>
 
     <!-- 2. THE FLOATING ANIMATION IMAGE -->
-    <!-- This image starts hidden and is used to fly across the screen -->
     <img id="floating-img" class="hidden" src="" alt="Winner">
 
     <!-- 3. THE TIMER STAGE (Bottom Half) -->
     <div id="timer-stage" class="stage hidden">
-
-        <!-- NEW: WINNER TEXT CONTAINER -->
         <div id="winner-text" class="winner-text"></div>
-
         <div class="timer-content">
             <div class="timer-label">Time Remaining</div>
             <div id="timer-display">01:00</div>

@@ -3,23 +3,33 @@ const canvas = document.getElementById('wheelCanvas');
 const ctx = canvas.getContext('2d');
 const indicator = document.getElementById('indicator');
 
-// Stages
 const wheelStage = document.getElementById('wheel-stage');
 const timerStage = document.getElementById('timer-stage');
 const winnerTextDisplay = document.getElementById('winner-text');
-
-// Floating Image
 const floatingImg = document.getElementById('floating-img');
-
-// Timer Elements
 const timerDisplay = document.getElementById('timer-display');
 const timerContent = document.querySelector('.timer-content');
+
+// New DOM Elements
+const globalTimerEl = document.getElementById('global-timer');
+const scoreLeftEl = document.getElementById('score-val-left');
+const scoreRightEl = document.getElementById('score-val-right');
 
 // --- VARIABLES ---
 let sectors = [];
 let currentRotation = 0;
-let timerInterval = null;
-let lastCommandId = 0; // For remote control
+let resultTimerInterval = null;
+let lastCommandId = 0;
+
+// Config State (synced from server)
+let appConfig = {
+    result_duration: 60,
+    global_time_remaining: 600,
+    global_timer_running: false
+};
+
+// Global Timer Interval
+let globalTimerInterval = setInterval(tickGlobalTimer, 1000);
 
 // --- CONFIGURATION ---
 const colorPalette = [
@@ -28,42 +38,34 @@ const colorPalette = [
     '#641E16', '#D0D3D4', '#E74C3C', '#2C3E50', '#FDEDEC'
 ];
 
-// --- 1. INITIALIZATION & DATA LOADING ---
-// Start Polling immediately
+// --- 1. INITIALIZATION ---
+// Poll fast for smooth UI updates
 setInterval(checkForCommands, 500);
 
 fetch('/api/get_wheel_data')
     .then(res => res.json())
     .then(data => {
         if(data.length === 0) return;
-
         const loadPromises = data.map(item => {
             return new Promise((resolve) => {
                 const img = new Image();
                 img.src = '/static/' + item.path;
-                img.onload = () => resolve({
-                    imgObject: img,
-                    src: '/static/' + item.path,
-                    text: item.text
-                });
+                img.onload = () => resolve({ imgObject: img, src: item.path, text: item.text }); // src fixed
                 img.onerror = () => resolve(null);
             });
         });
-
         Promise.all(loadPromises).then(loaded => {
-            const valid = loaded.filter(i => i !== null);
-            initWheel(valid);
+            initWheel(loaded.filter(i => i !== null));
         });
     });
 
 function initWheel(items) {
     const numSectors = items.length;
     const arcSize = (2 * Math.PI) / numSectors;
-
     sectors = items.map((item, i) => {
         return {
             imgObject: item.imgObject,
-            src: item.src,
+            src: '/static/' + item.src,
             text: item.text,
             color: colorPalette[i % colorPalette.length],
             startAngle: i * arcSize,
@@ -73,17 +75,15 @@ function initWheel(items) {
     drawWheel();
 }
 
+// ... drawWheel function remains exactly the same as before ...
 function drawWheel() {
     const centerX = canvas.width / 2;
     const centerY = canvas.height / 2;
     const radius = canvas.width / 2;
-
     sectors.forEach((sector) => {
         const startAngle = sector.startAngle;
         const endAngle = sector.endAngle;
         const angleMiddle = startAngle + (endAngle - startAngle) / 2;
-
-        // Sector
         ctx.beginPath();
         ctx.moveTo(centerX, centerY);
         ctx.arc(centerX, centerY, radius, startAngle, endAngle);
@@ -92,22 +92,15 @@ function drawWheel() {
         ctx.lineWidth = 2;
         ctx.strokeStyle = "rgba(0,0,0,0.2)";
         ctx.stroke();
-
-        // Image
         ctx.save();
         ctx.translate(centerX, centerY);
         ctx.rotate(angleMiddle);
         ctx.translate(radius * 0.65, 0);
-
         const imgSize = 70;
-
-        // White Background for Image
         ctx.beginPath();
         ctx.arc(0, 0, imgSize/2 + 4, 0, Math.PI * 2);
         ctx.fillStyle = "white";
         ctx.fill();
-
-        // Image itself
         ctx.beginPath();
         ctx.arc(0, 0, imgSize/2, 0, Math.PI * 2);
         ctx.clip();
@@ -116,152 +109,141 @@ function drawWheel() {
     });
 }
 
-// --- 2. REMOTE CONTROL POLLING ---
+// --- 2. POLLING & STATE MANAGEMENT ---
 function checkForCommands() {
     fetch('/api/check_status')
         .then(res => res.json())
         .then(data => {
-            // Check if there is a NEW command (ID is different from last one)
-            if (data.command_id !== 0 && data.command_id !== lastCommandId) {
-                console.log("New Command Received:", data.command);
+            // A. Update Scores immediately
+            if(data.scores) {
+                scoreLeftEl.textContent = data.scores.left;
+                scoreRightEl.textContent = data.scores.right;
+            }
 
+            // B. Check for new commands
+            if (data.command_id !== 0 && data.command_id !== lastCommandId) {
                 lastCommandId = data.command_id;
 
                 if (data.command === 'spin') {
                     startSpinSequence();
                 } else if (data.command === 'reset') {
                     resetApp();
+                } else if (data.command === 'set_timers') {
+                    // Update Local Config
+                    appConfig.result_duration = data.config.result_duration;
+                    appConfig.global_time_remaining = data.config.global_time_set;
+                    appConfig.global_timer_running = false; // Stop when setting new time
+                    updateGlobalTimerUI();
+                } else if (data.command === 'control_global_timer') {
+                    appConfig.global_timer_running = data.config.global_timer_running;
                 }
             }
-        })
-        .catch(err => console.error("Polling Error:", err));
+        });
 }
 
-// --- 3. ANIMATION LOGIC ---
+// --- 3. GLOBAL TIMER LOGIC ---
+function tickGlobalTimer() {
+    if (appConfig.global_timer_running && appConfig.global_time_remaining > 0) {
+        appConfig.global_time_remaining--;
+        updateGlobalTimerUI();
+    }
+}
+
+function updateGlobalTimerUI() {
+    const totalSec = appConfig.global_time_remaining;
+    const m = Math.floor(totalSec / 60).toString().padStart(2, '0');
+    const s = (totalSec % 60).toString().padStart(2, '0');
+    globalTimerEl.textContent = `${m}:${s}`;
+}
+
+// --- 4. ANIMATION LOGIC ---
 function startSpinSequence() {
-    // Safety Checks: Do not spin if empty or already busy (wheel hidden)
-    if(sectors.length === 0) {
-        console.warn("Cannot spin: No sectors loaded.");
-        return;
-    }
-    if(wheelStage.classList.contains('hidden')) {
-        console.warn("Cannot spin: Wheel is hidden (Game in progress).");
-        return;
-    }
-
-    console.log("Starting Spin...");
-
-    // Reset any pulse effects
+    if(sectors.length === 0 || wheelStage.classList.contains('hidden')) return;
     timerContent.classList.remove('pulse-red');
-
-    // Calculate rotation
     const spinAmount = 1800 + Math.random() * 360;
     currentRotation += spinAmount;
     canvas.style.transform = `rotate(-${currentRotation}deg)`;
-
-    // Wait 5 seconds for CSS animation
-    setTimeout(() => {
-        calculateWinner();
-    }, 5000);
+    setTimeout(calculateWinner, 5000);
 }
 
 function calculateWinner() {
     const numSectors = sectors.length;
     const degreesPerSector = 360 / numSectors;
     const actualRotation = currentRotation % 360;
-
     let winningAngle = (270 - actualRotation) % 360;
     if (winningAngle < 0) winningAngle += 360;
-
     const winningIndex = Math.floor(winningAngle / degreesPerSector);
-    const winner = sectors[winningIndex];
-
-    console.log("Winner determined:", winner.text);
-    startWinAnimation(winner);
+    startWinAnimation(sectors[winningIndex]);
 }
 
 function startWinAnimation(winner) {
     const rect = indicator.getBoundingClientRect();
-
-    // 1. Position Image at Indicator (No Animation)
     floatingImg.src = winner.src;
-    floatingImg.className = ''; // Reset classes
-
+    floatingImg.className = '';
     floatingImg.style.width = '80px';
     floatingImg.style.height = '80px';
     floatingImg.style.top = (rect.top + 30) + 'px';
     floatingImg.style.left = (rect.left + 25 - 40) + 'px';
     floatingImg.style.transform = 'translate(0, 0)';
-
-    // Force Reflow
     void floatingImg.offsetWidth;
 
-    // 2. Animate to Center
     floatingImg.classList.add('motion-active');
     floatingImg.classList.add('state-centered');
 
-    // Set Text
     winnerTextDisplay.textContent = winner.text || "WINNER";
     winnerTextDisplay.classList.remove('show');
 
-    // 3. Hide Wheel
-    setTimeout(() => {
-        wheelStage.classList.add('hidden');
-    }, 500);
+    setTimeout(() => { wheelStage.classList.add('hidden'); }, 500);
 
-    // 4. Move to Top & Show Result
     setTimeout(() => {
         floatingImg.classList.remove('state-centered');
         floatingImg.classList.add('state-top');
-
         timerStage.classList.remove('hidden');
         winnerTextDisplay.classList.add('show');
-
-        runTimer();
+        runResultTimer(); // Use new timer function
     }, 2500);
 }
 
-// --- 4. TIMER LOGIC ---
-function runTimer() {
-    let timeLeft = 60; // 60 Seconds
-    updateTimerUI(timeLeft);
+// --- 5. RESULT TIMER LOGIC ---
+function runResultTimer() {
+    // USE THE CONFIG DURATION
+    let timeLeft = appConfig.result_duration;
+    updateResultTimerUI(timeLeft);
 
-    if(timerInterval) clearInterval(timerInterval);
+    if(resultTimerInterval) clearInterval(resultTimerInterval);
 
-    timerInterval = setInterval(() => {
+    resultTimerInterval = setInterval(() => {
         timeLeft--;
-        updateTimerUI(timeLeft);
+        updateResultTimerUI(timeLeft);
 
         if (timeLeft <= 5 && timeLeft > 0) {
             timerContent.classList.add('pulse-red');
         }
 
         if (timeLeft <= 0) {
-            clearInterval(timerInterval);
+            clearInterval(resultTimerInterval);
             resetApp();
         }
     }, 1000);
 }
 
-function updateTimerUI(seconds) {
+function updateResultTimerUI(seconds) {
     const m = Math.floor(seconds / 60).toString().padStart(2, '0');
     const s = (seconds % 60).toString().padStart(2, '0');
     timerDisplay.textContent = `${m}:${s}`;
 }
 
-// --- 5. RESET LOGIC ---
+// --- 6. RESET ---
 function resetApp() {
-    console.log("Resetting App...");
-    if(timerInterval) clearInterval(timerInterval);
-
+    if(resultTimerInterval) clearInterval(resultTimerInterval);
     timerContent.classList.remove('pulse-red');
     timerStage.classList.add('hidden');
     winnerTextDisplay.classList.remove('show');
-
     floatingImg.classList.add('hidden');
     floatingImg.classList.remove('state-top', 'state-centered', 'motion-active');
-
     wheelStage.classList.remove('hidden');
 
-    timerDisplay.textContent = "01:00";
+    // Reset timer text to config value
+    const defSec = appConfig.result_duration;
+    updateResultTimerUI(defSec);
 }

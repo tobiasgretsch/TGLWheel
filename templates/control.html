@@ -5,66 +5,111 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Wheel Control</title>
     <style>
-        body {
-            font-family: sans-serif;
-            background: #2c3e50;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-        }
-        .panel {
-            background: white;
-            padding: 40px;
-            border-radius: 10px;
-            text-align: center;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-        }
-        h1 { margin-bottom: 30px; color: #333; }
+        body { font-family: sans-serif; background: #2c3e50; color: white; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+        .panel { background: rgba(0,0,0,0.3); padding: 20px; border-radius: 10px; border: 1px solid #34495e; }
+        h2 { margin-top: 0; color: #ecf0f1; border-bottom: 1px solid #7f8c8d; padding-bottom: 10px; }
+
+        .row { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; }
+        label { flex: 1; }
+        input { padding: 10px; width: 80px; text-align: center; font-size: 1.1rem; border-radius: 5px; border: none; }
+
         button {
-            display: block;
-            width: 100%;
-            padding: 20px;
-            margin: 10px 0;
-            font-size: 1.5rem;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-weight: bold;
-            transition: transform 0.1s;
+            padding: 15px; font-size: 1rem; border: none; border-radius: 5px; cursor: pointer;
+            font-weight: bold; transition: transform 0.1s; color: white; flex: 1;
         }
         button:active { transform: scale(0.98); }
-        .btn-spin { background-color: #27ae60; color: white; }
-        .btn-reset { background-color: #e74c3c; color: white; }
-        .status { margin-top: 20px; color: #7f8c8d; }
+
+        .btn-green { background: #27ae60; }
+        .btn-blue { background: #2980b9; }
+        .btn-red { background: #c0392B; }
+        .btn-orange { background: #d35400; }
+
+        .score-ctrl { display: flex; justify-content: space-between; gap: 20px; }
+        .score-box { text-align: center; background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; flex: 1;}
+        .big-btn { font-size: 2rem; width: 100%; margin-top: 10px; }
     </style>
 </head>
 <body>
-    <div class="panel">
-        <h1>Wheel Controller</h1>
-        <button class="btn-spin" onclick="sendCommand('spin')">SPIN WHEEL</button>
-        <button class="btn-reset" onclick="sendCommand('reset')">RESET ALL</button>
-        <div id="status" class="status">Ready</div>
+    <div class="container">
+        <h1>Control Panel</h1>
+
+        <!-- GAME CONTROL -->
+        <div class="panel">
+            <h2>Game Actions</h2>
+            <div class="row">
+                <button class="btn-green" onclick="sendAction('spin')">SPIN WHEEL</button>
+                <button class="btn-orange" onclick="sendAction('reset')">RESET VIEW</button>
+            </div>
+        </div>
+
+        <!-- TIMERS -->
+        <div class="panel">
+            <h2>Timers Configuration</h2>
+
+            <div class="row">
+                <label>Overall Timer (Minutes):</label>
+                <input type="number" id="globalTimeInput" value="10">
+            </div>
+            <div class="row">
+                 <button class="btn-blue" onclick="setTimers()">SET TIMER</button>
+                 <button class="btn-green" onclick="toggleGlobalTimer('start')">START</button>
+                 <button class="btn-red" onclick="toggleGlobalTimer('stop')">PAUSE</button>
+            </div>
+
+            <hr style="border-color: #555;">
+
+            <div class="row">
+                <label>Result Duration (Seconds):</label>
+                <input type="number" id="resultTimeInput" value="60">
+                <button class="btn-blue" onclick="setTimers()">UPDATE SETTINGS</button>
+            </div>
+        </div>
+
+        <!-- SCORES -->
+        <div class="panel">
+            <h2>Scoreboard</h2>
+            <div class="score-ctrl">
+                <div class="score-box">
+                    <div>HOME</div>
+                    <button class="btn-green big-btn" onclick="updateScore('left', 1)">+1</button>
+                    <button class="btn-red" style="margin-top:5px" onclick="updateScore('left', -1)">-1</button>
+                </div>
+                <div class="score-box">
+                    <div>GUEST</div>
+                    <button class="btn-green big-btn" onclick="updateScore('right', 1)">+1</button>
+                    <button class="btn-red" style="margin-top:5px" onclick="updateScore('right', -1)">-1</button>
+                </div>
+            </div>
+            <button class="btn-orange" style="margin-top: 15px;" onclick="sendAction('reset_scores')">RESET SCORES (0-0)</button>
+        </div>
     </div>
 
     <script>
-        function sendCommand(action) {
-            const statusDiv = document.getElementById('status');
-            statusDiv.textContent = "Sending " + action + "...";
-
+        function sendAction(action, payload = {}) {
             fetch('/api/send_command', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: action })
-            })
-            .then(res => res.json())
-            .then(data => {
-                statusDiv.textContent = "Last Action: " + action.toUpperCase();
-            })
-            .catch(err => {
-                statusDiv.textContent = "Error connecting to server";
+                body: JSON.stringify({ action: action, payload: payload })
             });
+        }
+
+        function updateScore(side, change) {
+            sendAction('update_score', { side: side, change: change });
+        }
+
+        function setTimers() {
+            const globalMin = document.getElementById('globalTimeInput').value;
+            const resultSec = document.getElementById('resultTimeInput').value;
+
+            sendAction('set_timers', {
+                global_time: globalMin * 60, // Convert to seconds
+                result_duration: resultSec
+            });
+        }
+
+        function toggleGlobalTimer(state) {
+            sendAction('control_global_timer', { state: state });
         }
     </script>
 </body>
