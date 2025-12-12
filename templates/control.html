@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wheel Control</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background: #2c3e50;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .panel {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        h1 { margin-bottom: 30px; color: #333; }
+        button {
+            display: block;
+            width: 100%;
+            padding: 20px;
+            margin: 10px 0;
+            font-size: 1.5rem;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: transform 0.1s;
+        }
+        button:active { transform: scale(0.98); }
+        .btn-spin { background-color: #27ae60; color: white; }
+        .btn-reset { background-color: #e74c3c; color: white; }
+        .status { margin-top: 20px; color: #7f8c8d; }
+    </style>
+</head>
+<body>
+    <div class="panel">
+        <h1>Wheel Controller</h1>
+        <button class="btn-spin" onclick="sendCommand('spin')">SPIN WHEEL</button>
+        <button class="btn-reset" onclick="sendCommand('reset')">RESET ALL</button>
+        <div id="status" class="status">Ready</div>
+    </div>
+
+    <script>
+        function sendCommand(action) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = "Sending " + action + "...";
+
+            fetch('/api/send_command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: action })
+            })
+            .then(res => res.json())
+            .then(data => {
+                statusDiv.textContent = "Last Action: " + action.toUpperCase();
+            })
+            .catch(err => {
+                statusDiv.textContent = "Error connecting to server";
+            });
+        }
+    </script>
+</body>
+</html>
