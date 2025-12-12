@@ -26,7 +26,9 @@
         <div class="wheel-wrapper">
             <div class="indicator" id="indicator"></div>
             <canvas id="wheelCanvas" width="600" height="600"></canvas>
-            <div class="wheel-hub"></div>
+            <div class="wheel-hub">
+                <img src="{{ url_for('static', filename='tg_logo.png') }}" alt="Logo">
+            </div>
         </div>
     </div>
 
@@ -35,9 +37,13 @@
 
     <!-- 3. THE TIMER STAGE (Bottom Half) -->
     <div id="timer-stage" class="stage hidden">
+
+        <!-- Winner Text (e.g., "SIGNED SHIRT") -->
         <div id="winner-text" class="winner-text"></div>
+
+        <!-- Timer Box -->
         <div class="timer-content">
-            <div class="timer-label">Time Remaining</div>
+            <!-- Removed the "Time Remaining" label here -->
             <div id="timer-display">01:00</div>
         </div>
     </div>

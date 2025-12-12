@@ -150,7 +150,7 @@ canvas {
     border-radius: 20px;
     text-align: center;
     box-shadow: 0 10px 20px rgba(0,0,0,0.3);
-    margin-bottom: 10vh;
+    margin-bottom: 2vh;
 }
 
 .timer-label {
@@ -213,17 +213,33 @@ canvas {
 /* Ensure the center hub still looks nice (a white circle) without the button functionality */
 .wheel-hub {
     position: absolute;
-    width: 60px;
-    height: 60px;
-    background: white;
-    border-radius: 50%;
-    border: 4px solid #bdc3c7;
-    z-index: 20;
-    /* Center it */
     top: 50%;
     left: 50%;
-    transform: translate(-50%, -50%);
-    box-shadow: 0 0 10px rgba(0,0,0,0.3);
+    transform: translate(-50%, -50%); /* Centers the div */
+    z-index: 20; /* Ensures it sits on top of canvas */
+
+    /* Size of the central circle */
+    width: 100px;
+    height: 100px;
+
+    /* Decoration */
+    background: white;
+    border-radius: 50%;
+    border: 5px solid #bdc3c7; /* Grey border ring */
+    box-shadow: 0 0 15px rgba(0,0,0,0.5);
+
+    /* Flexbox to center the image inside the circle */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden; /* Crops the corners of the image if it's square */
+}
+
+/* Add this new rule for the image itself */
+.wheel-hub img {
+    width: 70%;    /* Fills most of the circle */
+    height: 70%;
+    object-fit: contain; /* Ensures logo doesn't stretch */
 }
 
 /* Global Timer (Top Right) */
