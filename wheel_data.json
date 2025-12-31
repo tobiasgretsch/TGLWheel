@@ -1,10 +1,9 @@
 {
-    "HandschuheTest.png": "Beschreibung zur Aufgabe 1",
-    "HandschuheTest1.png": "Beschreibung zur Aufgabe 2",
-    "HandschuheTest2.png": "Beschreibung zur Aufgabe 3",
-    "HandschuheTest3.png": "Beschreibung zur Aufgabe 4",
-    "BallTest.png": "Beschreibung zur Aufgabe 5",
-    "BallTest1.png": "Beschreibung zur Aufgabe 6",
-    "BallTest2.png": "Beschreibung zur Aufgabe 7",
-    "BallTest3.png": "Beschreibung zur Aufgabe 8"
+    "TeamTor.png": "Jeder muss einmal den Ball in der Hand gehabt haben, bevor ein Tor geworfen wird",
+    "BallTausch.png": "Es ist Zeit für einen Ballwechsel",
+    "Huckepack.jpg": "Tore zählen nur noch wenn sie per Huckepack auf einem Mitspieler geworfen werden",
+    "StrangerThings.png": "Tor können nur noch mit der Falschen Hand erzielt werden",
+    "KempaTrick.jpg": "Tore dürfen nur noch per Kempa erzielt werden",
+    "TrinkPause.png": "Das Spiel wird für 1-Minute pausiert",
+    "Glückstor.png": "Der Spieler der das nächste Tor wirft darf anschließend noch einen 7m werfen"
 }
