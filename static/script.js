@@ -50,7 +50,7 @@ fetch('/api/get_wheel_data')
             return new Promise((resolve) => {
                 const img = new Image();
                 img.src = '/static/' + item.path;
-                img.onload = () => resolve({ imgObject: img, src: item.path, text: item.text }); // src fixed
+                img.onload = () => resolve({ imgObject: img, src: item.path, text: item.text });
                 img.onerror = () => resolve(null);
             });
         });
@@ -166,13 +166,32 @@ function startSpinSequence() {
     setTimeout(calculateWinner, 5000);
 }
 
+//function calculateWinner() {
+//    const numSectors = sectors.length;
+//    const degreesPerSector = 360 / numSectors;
+//    const actualRotation = currentRotation % 360;
+//    let winningAngle = (270 - actualRotation) % 360;
+//    if (winningAngle < 0) winningAngle += 360;
+//    const winningIndex = Math.floor(winningAngle / degreesPerSector);
+//    startWinAnimation(sectors[winningIndex]);
+//}
+
 function calculateWinner() {
     const numSectors = sectors.length;
     const degreesPerSector = 360 / numSectors;
+
+    // 1. Get the normalized rotation (0-359)
     const actualRotation = currentRotation % 360;
-    let winningAngle = (270 - actualRotation) % 360;
-    if (winningAngle < 0) winningAngle += 360;
+
+    // 2. The Calculation:
+    // Indicator is at 270 degrees (Top).
+    // Since wheel rotates Counter-Clockwise (-), we ADD the rotation
+    // to find what slice moved into the 270-degree spot.
+    let winningAngle = (270 + actualRotation) % 360;
+
+    // 3. Find the index
     const winningIndex = Math.floor(winningAngle / degreesPerSector);
+
     startWinAnimation(sectors[winningIndex]);
 }
 
