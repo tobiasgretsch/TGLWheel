@@ -1,23 +1,26 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wheel of Fortune</title>
+    <title>Glücksrad</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
     <!-- OVERLAYS (Always Visible) -->
-    <div id="global-timer">10:00</div>
+    <div id="global-timer">00:00</div>
 
     <div id="score-left" class="score-board">
-        <div class="score-label">HOME</div>
+        <div class="score-label">Heim</div>
         <div class="score-val" id="score-val-left">0</div>
     </div>
 
     <div id="score-right" class="score-board">
-        <div class="score-label">GUEST</div>
+        <div class="score-label">Gast</div>
         <div class="score-val" id="score-val-right">0</div>
     </div>
 
@@ -33,18 +36,13 @@
     </div>
 
     <!-- 2. THE FLOATING ANIMATION IMAGE -->
-    <img id="floating-img" class="hidden" src="" alt="Winner">
+    <img id="floating-img" class="hidden" src="" alt="Gewinner">
 
-    <!-- 3. THE TIMER STAGE (Bottom Half) -->
+    <!-- 3. THE TIMER STAGE (Result screen) -->
     <div id="timer-stage" class="stage hidden">
-
-        <!-- Winner Text (e.g., "SIGNED SHIRT") -->
         <div id="winner-text" class="winner-text"></div>
-
-        <!-- Timer Box -->
         <div class="timer-content">
-            <!-- Removed the "Time Remaining" label here -->
-            <div id="timer-display">01:00</div>
+            <div id="timer-display">00:00</div>
         </div>
     </div>
 

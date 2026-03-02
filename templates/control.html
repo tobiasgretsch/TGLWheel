@@ -1,98 +1,257 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wheel Control</title>
+    <title>Steuerung</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
     <style>
-        body { font-family: sans-serif; background: #2c3e50; color: white; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
-        .panel { background: rgba(0,0,0,0.3); padding: 20px; border-radius: 10px; border: 1px solid #34495e; }
-        h2 { margin-top: 0; color: #ecf0f1; border-bottom: 1px solid #7f8c8d; padding-bottom: 10px; }
-
-        .row { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; }
-        label { flex: 1; }
-        input { padding: 10px; width: 80px; text-align: center; font-size: 1.1rem; border-radius: 5px; border: none; }
-
-        button {
-            padding: 15px; font-size: 1rem; border: none; border-radius: 5px; cursor: pointer;
-            font-weight: bold; transition: transform 0.1s; color: white; flex: 1;
+        /* --- TOKENS (mirrors style.css for consistent look) --- */
+        :root {
+            --color-bg:         #1a2332;
+            --color-surface:    rgba(255, 255, 255, 0.06);
+            --color-border:     rgba(255, 255, 255, 0.12);
+            --color-accent:     #e74c3c;
+            --color-text:       #ffffff;
+            --color-text-muted: rgba(255, 255, 255, 0.5);
+            --radius-sm: 10px;
+            --radius-md: 18px;
+            --btn-green:  #27ae60;
+            --btn-blue:   #2980b9;
+            --btn-red:    #c0392b;
+            --btn-orange: #d35400;
         }
-        button:active { transform: scale(0.98); }
 
-        .btn-green  { background: #27ae60; }
-        .btn-blue   { background: #2980b9; }
-        .btn-red    { background: #c0392B; }
-        .btn-orange { background: #d35400; }
+        *, *::before, *::after { box-sizing: border-box; }
 
-        .score-ctrl { display: flex; justify-content: space-between; gap: 20px; }
-        .score-box { text-align: center; background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; flex: 1; }
-        .big-btn { font-size: 2rem; width: 100%; margin-top: 10px; }
+        body {
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            background: var(--color-bg);
+            color: var(--color-text);
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+        }
 
+        .container {
+            max-width: 700px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        h1 {
+            margin: 0 0 8px;
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--color-text-muted);
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        /* --- PANELS --- */
+        .panel {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-md);
+            padding: 20px;
+        }
+
+        h2 {
+            margin: 0 0 16px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--color-text-muted);
+        }
+
+        /* --- ROWS --- */
+        .row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+
+        .row:last-child { margin-bottom: 0; }
+
+        label {
+            flex: 1;
+            min-width: 160px;
+            font-size: 0.9rem;
+            color: var(--color-text-muted);
+        }
+
+        input[type="number"] {
+            width: 90px;
+            padding: 10px 12px;
+            text-align: center;
+            font-size: 1rem;
+            font-family: inherit;
+            font-weight: 600;
+            color: var(--color-text);
+            background: rgba(255,255,255,0.08);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-sm);
+            outline: none;
+        }
+
+        input[type="number"]:focus {
+            border-color: rgba(255,255,255,0.35);
+        }
+
+        /* --- BUTTONS --- */
+        button {
+            flex: 1;
+            min-height: 52px;
+            padding: 0 16px;
+            font-size: 0.9rem;
+            font-family: inherit;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            border: none;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            color: #ffffff;
+            transition: opacity 0.15s, transform 0.1s;
+        }
+
+        button:active  { transform: scale(0.97); }
+        button:hover   { opacity: 0.88; }
+
+        .btn-green  { background: var(--btn-green); }
+        .btn-blue   { background: var(--btn-blue); }
+        .btn-red    { background: var(--btn-red); }
+        .btn-orange { background: var(--btn-orange); }
+
+        /* --- DIVIDER --- */
+        hr {
+            border: none;
+            border-top: 1px solid var(--color-border);
+            margin: 16px 0;
+        }
+
+        /* --- SCOREBOARD --- */
+        .score-ctrl {
+            display: flex;
+            gap: 12px;
+        }
+
+        .score-box {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-sm);
+            padding: 16px 12px;
+        }
+
+        .score-box-label {
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--color-text-muted);
+        }
+
+        .score-box button {
+            width: 100%;
+        }
+
+        .btn-score-plus {
+            min-height: 68px;
+            font-size: 1.8rem;
+        }
+
+        .btn-score-minus {
+            min-height: 44px;
+            font-size: 1rem;
+        }
+
+        .btn-full {
+            width: 100%;
+            margin-top: 12px;
+        }
+
+        /* --- STATUS TOAST --- */
         #status-msg {
-            position: fixed; bottom: 20px; right: 20px;
-            padding: 10px 20px; border-radius: 8px;
-            font-weight: bold; font-size: 0.9rem;
-            opacity: 0; transition: opacity 0.3s;
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            border-radius: var(--radius-sm);
+            font-weight: 600;
+            font-size: 0.85rem;
+            opacity: 0;
+            transition: opacity 0.25s;
             pointer-events: none;
         }
+
         #status-msg.show { opacity: 1; }
-        #status-msg.ok  { background: #27ae60; }
-        #status-msg.err { background: #c0392b; }
+        #status-msg.ok   { background: var(--btn-green); }
+        #status-msg.err  { background: var(--btn-red); }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Control Panel</h1>
+        <h1>Steuerung</h1>
 
-        <!-- GAME CONTROL -->
+        <!-- SPIELSTEUERUNG -->
         <div class="panel">
-            <h2>Game Actions</h2>
+            <h2>Spielsteuerung</h2>
             <div class="row">
-                <button class="btn-green"  onclick="sendAction('spin')">SPIN WHEEL</button>
-                <button class="btn-orange" onclick="sendAction('reset')">RESET VIEW</button>
+                <button class="btn-green" onclick="sendAction('spin')">RAD DREHEN</button>
+                <button class="btn-orange" onclick="sendAction('reset')">ZURÜCKSETZEN</button>
             </div>
         </div>
 
-        <!-- TIMERS -->
+        <!-- TIMER -->
         <div class="panel">
-            <h2>Timers Configuration</h2>
+            <h2>Timer</h2>
 
             <div class="row">
-                <label>Overall Timer (Minutes):</label>
+                <label>Spielzeit (Minuten):</label>
                 <input type="number" id="globalTimeInput" value="10" min="1">
             </div>
             <div class="row">
-                <button class="btn-blue"  onclick="setTimers()">SET TIMER</button>
+                <button class="btn-blue"  onclick="setTimers()">SETZEN</button>
                 <button class="btn-green" onclick="toggleGlobalTimer('start')">START</button>
                 <button class="btn-red"   onclick="toggleGlobalTimer('stop')">PAUSE</button>
             </div>
 
-            <hr style="border-color: #555;">
+            <hr>
 
             <div class="row">
-                <label>Result Duration (Seconds):</label>
+                <label>Ergebnisanzeige (Sekunden):</label>
                 <input type="number" id="resultTimeInput" value="60" min="5">
-                <button class="btn-blue" onclick="setResultDuration()">APPLY</button>
+                <button class="btn-blue" onclick="setResultDuration()">ÜBERNEHMEN</button>
             </div>
         </div>
 
-        <!-- SCORES -->
+        <!-- SPIELSTAND -->
         <div class="panel">
-            <h2>Scoreboard</h2>
+            <h2>Spielstand</h2>
             <div class="score-ctrl">
                 <div class="score-box">
-                    <div>HOME</div>
-                    <button class="btn-green big-btn" onclick="updateScore('left', 1)">+1</button>
-                    <button class="btn-red" style="margin-top:5px" onclick="updateScore('left', -1)">-1</button>
+                    <div class="score-box-label">Heim</div>
+                    <button class="btn-green btn-score-plus" onclick="updateScore('left', 1)">+1</button>
+                    <button class="btn-red   btn-score-minus" onclick="updateScore('left', -1)">−1</button>
                 </div>
                 <div class="score-box">
-                    <div>GUEST</div>
-                    <button class="btn-green big-btn" onclick="updateScore('right', 1)">+1</button>
-                    <button class="btn-red" style="margin-top:5px" onclick="updateScore('right', -1)">-1</button>
+                    <div class="score-box-label">Gast</div>
+                    <button class="btn-green btn-score-plus" onclick="updateScore('right', 1)">+1</button>
+                    <button class="btn-red   btn-score-minus" onclick="updateScore('right', -1)">−1</button>
                 </div>
             </div>
-            <button class="btn-orange" style="margin-top: 15px;" onclick="sendAction('reset_scores')">RESET SCORES (0-0)</button>
+            <button class="btn-orange btn-full" onclick="sendAction('reset_scores')">SPIELSTAND ZURÜCKSETZEN</button>
         </div>
     </div>
 
@@ -117,9 +276,9 @@
             })
             .then(res => {
                 if (!res.ok) throw new Error(`Server error ${res.status}`);
-                showStatus(true, action + ' sent');
+                showStatus(true, action + ' gesendet');
             })
-            .catch(err => showStatus(false, 'Error: ' + err.message));
+            .catch(err => showStatus(false, 'Fehler: ' + err.message));
         }
 
         function updateScore(side, change) {
@@ -128,13 +287,13 @@
 
         function setTimers() {
             const globalMin = parseInt(document.getElementById('globalTimeInput').value, 10);
-            if (isNaN(globalMin) || globalMin < 1) { showStatus(false, 'Invalid timer value'); return; }
+            if (isNaN(globalMin) || globalMin < 1) { showStatus(false, 'Ungültiger Wert'); return; }
             sendAction('set_timers', { global_time: globalMin * 60 });
         }
 
         function setResultDuration() {
             const resultSec = parseInt(document.getElementById('resultTimeInput').value, 10);
-            if (isNaN(resultSec) || resultSec < 5) { showStatus(false, 'Invalid duration (min 5s)'); return; }
+            if (isNaN(resultSec) || resultSec < 5) { showStatus(false, 'Mindestens 5 Sekunden'); return; }
             sendAction('set_timers', { result_duration: resultSec });
         }
 
