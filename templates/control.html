@@ -20,14 +20,25 @@
         }
         button:active { transform: scale(0.98); }
 
-        .btn-green { background: #27ae60; }
-        .btn-blue { background: #2980b9; }
-        .btn-red { background: #c0392B; }
+        .btn-green  { background: #27ae60; }
+        .btn-blue   { background: #2980b9; }
+        .btn-red    { background: #c0392B; }
         .btn-orange { background: #d35400; }
 
         .score-ctrl { display: flex; justify-content: space-between; gap: 20px; }
-        .score-box { text-align: center; background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; flex: 1;}
+        .score-box { text-align: center; background: rgba(255,255,255,0.1); padding: 10px; border-radius: 5px; flex: 1; }
         .big-btn { font-size: 2rem; width: 100%; margin-top: 10px; }
+
+        #status-msg {
+            position: fixed; bottom: 20px; right: 20px;
+            padding: 10px 20px; border-radius: 8px;
+            font-weight: bold; font-size: 0.9rem;
+            opacity: 0; transition: opacity 0.3s;
+            pointer-events: none;
+        }
+        #status-msg.show { opacity: 1; }
+        #status-msg.ok  { background: #27ae60; }
+        #status-msg.err { background: #c0392b; }
     </style>
 </head>
 <body>
@@ -38,7 +49,7 @@
         <div class="panel">
             <h2>Game Actions</h2>
             <div class="row">
-                <button class="btn-green" onclick="sendAction('spin')">SPIN WHEEL</button>
+                <button class="btn-green"  onclick="sendAction('spin')">SPIN WHEEL</button>
                 <button class="btn-orange" onclick="sendAction('reset')">RESET VIEW</button>
             </div>
         </div>
@@ -49,20 +60,20 @@
 
             <div class="row">
                 <label>Overall Timer (Minutes):</label>
-                <input type="number" id="globalTimeInput" value="10">
+                <input type="number" id="globalTimeInput" value="10" min="1">
             </div>
             <div class="row">
-                 <button class="btn-blue" onclick="setTimers()">SET TIMER</button>
-                 <button class="btn-green" onclick="toggleGlobalTimer('start')">START</button>
-                 <button class="btn-red" onclick="toggleGlobalTimer('stop')">PAUSE</button>
+                <button class="btn-blue"  onclick="setTimers()">SET TIMER</button>
+                <button class="btn-green" onclick="toggleGlobalTimer('start')">START</button>
+                <button class="btn-red"   onclick="toggleGlobalTimer('stop')">PAUSE</button>
             </div>
 
             <hr style="border-color: #555;">
 
             <div class="row">
                 <label>Result Duration (Seconds):</label>
-                <input type="number" id="resultTimeInput" value="60">
-                <button class="btn-blue" onclick="setTimers()">UPDATE SETTINGS</button>
+                <input type="number" id="resultTimeInput" value="60" min="5">
+                <button class="btn-blue" onclick="setResultDuration()">APPLY</button>
             </div>
         </div>
 
@@ -85,31 +96,50 @@
         </div>
     </div>
 
+    <div id="status-msg"></div>
+
     <script>
+        let statusTimeout = null;
+
+        function showStatus(ok, text) {
+            const el = document.getElementById('status-msg');
+            el.textContent = text;
+            el.className = 'show ' + (ok ? 'ok' : 'err');
+            clearTimeout(statusTimeout);
+            statusTimeout = setTimeout(() => { el.className = ''; }, 2000);
+        }
+
         function sendAction(action, payload = {}) {
             fetch('/api/send_command', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: action, payload: payload })
-            });
+                body: JSON.stringify({ action, payload })
+            })
+            .then(res => {
+                if (!res.ok) throw new Error(`Server error ${res.status}`);
+                showStatus(true, action + ' sent');
+            })
+            .catch(err => showStatus(false, 'Error: ' + err.message));
         }
 
         function updateScore(side, change) {
-            sendAction('update_score', { side: side, change: change });
+            sendAction('update_score', { side, change });
         }
 
         function setTimers() {
-            const globalMin = document.getElementById('globalTimeInput').value;
-            const resultSec = document.getElementById('resultTimeInput').value;
+            const globalMin = parseInt(document.getElementById('globalTimeInput').value, 10);
+            if (isNaN(globalMin) || globalMin < 1) { showStatus(false, 'Invalid timer value'); return; }
+            sendAction('set_timers', { global_time: globalMin * 60 });
+        }
 
-            sendAction('set_timers', {
-                global_time: globalMin * 60, // Convert to seconds
-                result_duration: resultSec
-            });
+        function setResultDuration() {
+            const resultSec = parseInt(document.getElementById('resultTimeInput').value, 10);
+            if (isNaN(resultSec) || resultSec < 5) { showStatus(false, 'Invalid duration (min 5s)'); return; }
+            sendAction('set_timers', { result_duration: resultSec });
         }
 
         function toggleGlobalTimer(state) {
-            sendAction('control_global_timer', { state: state });
+            sendAction('control_global_timer', { state });
         }
     </script>
 </body>
