@@ -1,8 +1,9 @@
 import os
 import json
+import queue
 import time
 import threading
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, Response, stream_with_context
 
 app = Flask(__name__)
 
@@ -14,6 +15,27 @@ ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif'}
 # --- GLOBAL STATE ---
 _state_lock = threading.Lock()
 _command_counter = 0
+
+# --- SSE SUBSCRIBERS ---
+_subscribers: list[queue.Queue] = []
+_subscribers_lock = threading.Lock()
+
+
+def _notify_subscribers(snapshot: dict) -> None:
+    """Push a state snapshot to every connected SSE client."""
+    message = f"data: {json.dumps(snapshot)}\n\n"
+    with _subscribers_lock:
+        dead = [q for q in _subscribers if not _try_put(q, message)]
+        for q in dead:
+            _subscribers.remove(q)
+
+
+def _try_put(q: queue.Queue, message: str) -> bool:
+    try:
+        q.put_nowait(message)
+        return True
+    except queue.Full:
+        return False
 
 game_state = {
     "command_id": 0,
@@ -148,7 +170,37 @@ def send_command():
 
         snapshot = _state_snapshot()
 
+    _notify_subscribers(snapshot)
     return jsonify({"status": "success", "state": snapshot})
+
+
+@app.route("/api/stream")
+def stream():
+    def event_stream():
+        q: queue.Queue = queue.Queue(maxsize=10)
+        with _subscribers_lock:
+            _subscribers.append(q)
+        try:
+            # Send current state immediately so the client is up to date on connect.
+            with _state_lock:
+                initial = _state_snapshot()
+            yield f"data: {json.dumps(initial)}\n\n"
+            while True:
+                try:
+                    yield q.get(timeout=30)
+                except queue.Empty:
+                    # Heartbeat keeps the connection alive through proxies and load balancers.
+                    yield ": heartbeat\n\n"
+        finally:
+            with _subscribers_lock:
+                if q in _subscribers:
+                    _subscribers.remove(q)
+
+    return Response(
+        stream_with_context(event_stream()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 if __name__ == "__main__":

@@ -3,7 +3,6 @@
 // never silently diverge from --spin-duration in style.css.
 const SPIN_DURATION_MS = parseFloat(getComputedStyle(document.getElementById('wheelCanvas')).transitionDuration) * 1000;
 const MIN_SPIN_ROTATIONS = 5;   // Full rotations before the random stop angle
-const POLL_INTERVAL_MS = 500;
 const RESULT_TICK_MS = 200;     // Result timer checks every 200ms to stay accurate
 
 // --- DOM ELEMENTS ---
@@ -44,15 +43,14 @@ const colorPalette = [
 ];
 
 // --- 1. INITIALIZATION ---
-// Fetch current server state first to initialise lastCommandId.
-// This prevents stale commands from being replayed after a page refresh.
-fetch('/api/check_status')
-    .then(res => res.json())
-    .then(state => {
-        lastCommandId = state.command_id;
-        syncConfigFromState(state);
-        scheduleNextPoll();
-    });
+// SSE: The server pushes state changes instantly instead of the client polling.
+// The first message sent on connect carries the full current state, which initialises
+// lastCommandId and prevents stale commands from replaying after a page refresh.
+const eventSource = new EventSource('/api/stream');
+eventSource.onmessage = (event) => {
+    handleStateUpdate(JSON.parse(event.data));
+};
+// EventSource reconnects automatically on error — no manual handling needed.
 
 fetch('/api/get_wheel_data')
     .then(res => res.json())
@@ -131,36 +129,24 @@ function drawWheel() {
 }
 
 
-// --- 2. POLLING ---
-// Uses recursive setTimeout instead of setInterval so a slow server response
-// cannot cause overlapping in-flight requests.
-function scheduleNextPoll() {
-    setTimeout(() => {
-        checkForCommands().finally(scheduleNextPoll);
-    }, POLL_INTERVAL_MS);
-}
+// --- 2. STATE HANDLER ---
+function handleStateUpdate(data) {
+    // Update score display only when the value actually changed.
+    const leftVal = String(data.scores.left);
+    const rightVal = String(data.scores.right);
+    if (scoreLeftEl.textContent !== leftVal) scoreLeftEl.textContent = leftVal;
+    if (scoreRightEl.textContent !== rightVal) scoreRightEl.textContent = rightVal;
 
-function checkForCommands() {
-    return fetch('/api/check_status')
-        .then(res => res.json())
-        .then(data => {
-            // Update score display only when the value actually changed
-            const leftVal = String(data.scores.left);
-            const rightVal = String(data.scores.right);
-            if (scoreLeftEl.textContent !== leftVal) scoreLeftEl.textContent = leftVal;
-            if (scoreRightEl.textContent !== rightVal) scoreRightEl.textContent = rightVal;
+    syncConfigFromState(data);
 
-            syncConfigFromState(data);
-
-            if (data.command_id !== 0 && data.command_id !== lastCommandId) {
-                lastCommandId = data.command_id;
-                if (data.command === 'spin') {
-                    startSpinSequence();
-                } else if (data.command === 'reset') {
-                    resetApp();
-                }
-            }
-        });
+    if (data.command_id !== 0 && data.command_id !== lastCommandId) {
+        lastCommandId = data.command_id;
+        if (data.command === 'spin') {
+            startSpinSequence();
+        } else if (data.command === 'reset') {
+            resetApp();
+        }
+    }
 }
 
 
@@ -173,7 +159,7 @@ function syncConfigFromState(data) {
 
     if (data.config.global_timer_running) {
         // Anchor the local end time to now + server-reported remaining so the local
-        // display tick stays in sync after every poll.
+        // display tick stays in sync with the server.
         globalTimerEndMs = Date.now() + data.config.global_time_remaining * 1000;
     } else {
         globalTimerEndMs = null;
