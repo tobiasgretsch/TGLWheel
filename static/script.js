@@ -29,6 +29,7 @@ let resultTimerEndMs = null;
 let resultTimerRemaining = 0;          // seconds frozen when paused
 let resultTimerState = 'idle';         // 'idle' | 'ready' | 'running' | 'paused'
 let globalTimerEndMs = null;           // Date.now() + remaining_ms when the game clock is running
+let spinTimeoutId = null;              // setTimeout handle for the post-spin winner reveal
 
 // Config State (synced from server)
 let appConfig = {
@@ -202,26 +203,26 @@ function startSpinSequence() {
     isSpinning = true;
     timerContent.classList.remove('pulse-red');
 
-    const spinAmount = MIN_SPIN_ROTATIONS * 360 + Math.random() * 360;
+    // Pre-select the winning sector so the rotation distance is always exactly
+    // MIN_SPIN_ROTATIONS * 360 + sector_offset degrees — consistent speed every time.
+    const degreesPerSector = 360 / sectors.length;
+    const winningIndex = Math.floor(Math.random() * sectors.length);
+
+    // Indicator is at the top (270°). Reverse the calculateWinner formula to find
+    // the rotation that places the winning sector's midpoint under the indicator.
+    const targetAngle = (winningIndex + 0.5) * degreesPerSector;
+    const neededRotation = ((targetAngle - 270) + 360) % 360;
+    const spinAmount = MIN_SPIN_ROTATIONS * 360 + neededRotation;
+
     currentRotation += spinAmount;
     canvas.style.transform = `rotate(-${currentRotation}deg)`;
 
     // Delay must match --spin-duration in style.css (read via SPIN_DURATION_MS above).
-    setTimeout(calculateWinner, SPIN_DURATION_MS);
-}
-
-function calculateWinner() {
-    const degreesPerSector = 360 / sectors.length;
-
-    // Normalise rotation before calculating to prevent floating-point drift over many spins.
-    currentRotation = currentRotation % 360;
-
-    // Indicator is at the top (270°). The wheel rotates counter-clockwise (negative CSS
-    // rotation), so adding the rotation finds which sector moved into the indicator position.
-    const winningAngle = (270 + currentRotation) % 360;
-    const winningIndex = Math.floor(winningAngle / degreesPerSector);
-
-    startWinAnimation(sectors[winningIndex]);
+    // Store the ID so resetApp() can cancel it if RESET is pressed mid-spin.
+    spinTimeoutId = setTimeout(() => {
+        spinTimeoutId = null;
+        startWinAnimation(sectors[winningIndex]);
+    }, SPIN_DURATION_MS);
 }
 
 function startWinAnimation(winner) {
@@ -311,6 +312,12 @@ function updateResultTimerUI(seconds) {
 
 // --- 7. RESET ---
 function resetApp() {
+    // Cancel any in-flight spin so the winner reveal never fires after a reset.
+    if (spinTimeoutId) {
+        clearTimeout(spinTimeoutId);
+        spinTimeoutId = null;
+    }
+
     if (resultTimerInterval) {
         clearInterval(resultTimerInterval);
         resultTimerInterval = null;
@@ -325,4 +332,13 @@ function resetApp() {
     floatingImg.classList.remove('state-top', 'state-centered', 'motion-active');
     wheelStage.classList.remove('hidden');
     updateResultTimerUI(appConfig.result_duration);
+
+    // Snap the canvas back to 0° instantly (disabling the transition so the audience
+    // does not see a 5-second reverse spin). currentRotation is reset so the next
+    // spin always travels the same fixed distance from a clean starting point.
+    canvas.style.transition = 'none';
+    canvas.style.transform = 'rotate(0deg)';
+    currentRotation = 0;
+    void canvas.offsetWidth; // commit the style before re-enabling transition
+    canvas.style.transition = '';
 }
