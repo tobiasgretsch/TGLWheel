@@ -30,6 +30,8 @@ let resultTimerRemaining = 0;          // seconds frozen when paused
 let resultTimerState = 'idle';         // 'idle' | 'ready' | 'running' | 'paused'
 let globalTimerEndMs = null;           // Date.now() + remaining_ms when the game clock is running
 let spinTimeoutId = null;              // setTimeout handle for the post-spin winner reveal
+let winAnimTimeoutA = null;            // 500ms: hide wheel stage after win
+let winAnimTimeoutB = null;            // 2500ms: show timer stage / winner text
 
 // Config State (synced from server)
 let appConfig = {
@@ -243,9 +245,13 @@ function startWinAnimation(winner) {
     winnerTextDisplay.textContent = winner.text || 'WINNER';
     winnerTextDisplay.classList.remove('show');
 
-    setTimeout(() => { wheelStage.classList.add('hidden'); }, 500);
+    winAnimTimeoutA = setTimeout(() => {
+        winAnimTimeoutA = null;
+        wheelStage.classList.add('hidden');
+    }, 500);
 
-    setTimeout(() => {
+    winAnimTimeoutB = setTimeout(() => {
+        winAnimTimeoutB = null;
         floatingImg.classList.remove('state-centered');
         floatingImg.classList.add('state-top');
         timerStage.classList.remove('hidden');
@@ -312,11 +318,10 @@ function updateResultTimerUI(seconds) {
 
 // --- 7. RESET ---
 function resetApp() {
-    // Cancel any in-flight spin so the winner reveal never fires after a reset.
-    if (spinTimeoutId) {
-        clearTimeout(spinTimeoutId);
-        spinTimeoutId = null;
-    }
+    // Cancel all in-flight timeouts so no deferred animation step can fire after reset.
+    if (spinTimeoutId)   { clearTimeout(spinTimeoutId);   spinTimeoutId   = null; }
+    if (winAnimTimeoutA) { clearTimeout(winAnimTimeoutA); winAnimTimeoutA = null; }
+    if (winAnimTimeoutB) { clearTimeout(winAnimTimeoutB); winAnimTimeoutB = null; }
 
     if (resultTimerInterval) {
         clearInterval(resultTimerInterval);
