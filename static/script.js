@@ -26,7 +26,9 @@ let isSpinning = false;
 let lastCommandId = 0;
 let resultTimerInterval = null;
 let resultTimerEndMs = null;
-let globalTimerEndMs = null; // Date.now() + remaining_ms when the game clock is running
+let resultTimerRemaining = 0;          // seconds frozen when paused
+let resultTimerState = 'idle';         // 'idle' | 'ready' | 'running' | 'paused'
+let globalTimerEndMs = null;           // Date.now() + remaining_ms when the game clock is running
 
 // Config State (synced from server)
 let appConfig = {
@@ -153,17 +155,35 @@ function handleStateUpdate(data) {
 // --- 3. CONFIG SYNC ---
 function syncConfigFromState(data) {
     if (!data.config) return;
+
+    // Capture previous running state BEFORE overwriting so we can detect transitions.
+    const prevRunning = appConfig.global_timer_running;
+    const nextRunning = data.config.global_timer_running;
+
     appConfig.result_duration = data.config.result_duration;
     appConfig.global_time_remaining = data.config.global_time_remaining;
-    appConfig.global_timer_running = data.config.global_timer_running;
+    appConfig.global_timer_running = nextRunning;
 
-    if (data.config.global_timer_running) {
+    if (nextRunning) {
         // Anchor the local end time to now + server-reported remaining so the local
         // display tick stays in sync with the server.
         globalTimerEndMs = Date.now() + data.config.global_time_remaining * 1000;
     } else {
         globalTimerEndMs = null;
         updateGlobalTimerUI(data.config.global_time_remaining);
+    }
+
+    // Link the result timer to the global game timer.
+    if (!prevRunning && nextRunning) {
+        // Global timer just STARTED → also start/resume the result timer if it is waiting.
+        if (resultTimerState === 'ready' || resultTimerState === 'paused') {
+            startResultTimer();
+        }
+    } else if (prevRunning && !nextRunning) {
+        // Global timer just PAUSED → also pause the result timer if it is running.
+        if (resultTimerState === 'running') {
+            pauseResultTimer();
+        }
     }
 }
 
@@ -229,16 +249,29 @@ function startWinAnimation(winner) {
         floatingImg.classList.add('state-top');
         timerStage.classList.remove('hidden');
         winnerTextDisplay.classList.add('show');
-        runResultTimer();
+        armResultTimer();
     }, 2500);
 }
 
 
 // --- 6. RESULT TIMER ---
-function runResultTimer() {
+
+// Called when the result screen appears. Displays the full duration but does NOT
+// start counting — waits for the global game timer to be started via START.
+function armResultTimer() {
+    resultTimerState = 'ready';
+    resultTimerRemaining = appConfig.result_duration;
+    updateResultTimerUI(resultTimerRemaining);
+}
+
+// Starts (or resumes) the result timer countdown. Picks up from the frozen
+// remaining time if paused, otherwise starts from the full configured duration.
+function startResultTimer() {
     if (resultTimerInterval) clearInterval(resultTimerInterval);
-    resultTimerEndMs = Date.now() + appConfig.result_duration * 1000;
-    updateResultTimerUI(appConfig.result_duration);
+    const fromSeconds = resultTimerState === 'paused' ? resultTimerRemaining : appConfig.result_duration;
+    resultTimerState = 'running';
+    resultTimerEndMs = Date.now() + fromSeconds * 1000;
+    updateResultTimerUI(fromSeconds);
 
     // Tick faster than 1s so the displayed second is always accurate.
     resultTimerInterval = setInterval(() => {
@@ -251,9 +284,22 @@ function runResultTimer() {
         if (remaining <= 0) {
             clearInterval(resultTimerInterval);
             resultTimerInterval = null;
+            resultTimerState = 'idle';
             resetApp();
         }
     }, RESULT_TICK_MS);
+}
+
+// Freezes the result timer at its current remaining value.
+function pauseResultTimer() {
+    if (resultTimerInterval) {
+        clearInterval(resultTimerInterval);
+        resultTimerInterval = null;
+    }
+    resultTimerRemaining = Math.max(0, Math.ceil((resultTimerEndMs - Date.now()) / 1000));
+    resultTimerState = 'paused';
+    timerContent.classList.remove('pulse-red');
+    updateResultTimerUI(resultTimerRemaining);
 }
 
 function updateResultTimerUI(seconds) {
@@ -269,6 +315,8 @@ function resetApp() {
         clearInterval(resultTimerInterval);
         resultTimerInterval = null;
     }
+    resultTimerState = 'idle';
+    resultTimerRemaining = 0;
     isSpinning = false;
     timerContent.classList.remove('pulse-red');
     timerStage.classList.add('hidden');
