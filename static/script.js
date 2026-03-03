@@ -333,8 +333,17 @@ function resetApp() {
     timerContent.classList.remove('pulse-red');
     timerStage.classList.add('hidden');
     winnerTextDisplay.classList.remove('show');
-    floatingImg.classList.add('hidden');
-    floatingImg.classList.remove('state-top', 'state-centered', 'motion-active');
+    winnerTextDisplay.textContent = '';
+
+    // Remove motion-active FIRST to kill any running CSS transition, then force a
+    // reflow so the browser commits the stopped state before display:none is applied.
+    // Without this, transition:all can keep the image painted for another frame.
+    floatingImg.classList.remove('motion-active');
+    void floatingImg.offsetWidth;
+    floatingImg.classList.remove('state-top', 'state-centered');
+    floatingImg.className = 'hidden';
+    floatingImg.style.cssText = '';     // wipe inline top/left/width/height set by startWinAnimation
+
     wheelStage.classList.remove('hidden');
     updateResultTimerUI(appConfig.result_duration);
 
