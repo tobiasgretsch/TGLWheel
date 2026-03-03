@@ -46,6 +46,7 @@ game_state = {
         "global_time_remaining": 600,
         "global_timer_running": False,
         "global_timer_start": None,  # time.time() when the timer was last started
+        "global_timer_size": 3.0,   # rem units for the on-screen timer font size
     },
 }
 
@@ -155,6 +156,10 @@ def send_command():
                 game_state["config"]["global_time_remaining"] = int(payload["global_time"])
                 game_state["config"]["global_timer_running"] = False
                 game_state["config"]["global_timer_start"] = None
+
+        elif action == "set_timer_size":
+            size = float(payload.get("size", 3.0))
+            game_state["config"]["global_timer_size"] = max(1.0, min(12.0, size))
 
         elif action == "control_global_timer":
             state = payload.get("state")

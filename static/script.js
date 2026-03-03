@@ -41,11 +41,8 @@ let appConfig = {
 };
 
 // --- CONFIGURATION ---
-const colorPalette = [
-    '#E30613', '#FFFFFF', '#8A0000', '#BDC3C7', '#C0392B',
-    '#ECF0F1', '#7B241C', '#95A5A6', '#FF4D4D', '#F4F6F7',
-    '#641E16', '#D0D3D4', '#E74C3C', '#2C3E50', '#FDEDEC'
-];
+// Two alternating sector colours — deep red / dark navy — match the UI tokens.
+const SECTOR_COLORS = ['#B03030', '#1C3455'];
 
 // --- 1. INITIALIZATION ---
 // SSE: The server pushes state changes instantly instead of the client polling.
@@ -88,7 +85,6 @@ function initWheel(items) {
         imgObject: item.imgObject,
         src: '/static/' + item.src,
         text: item.text,
-        color: colorPalette[i % colorPalette.length],
         startAngle: i * arcSize,
         endAngle: (i + 1) * arcSize,
     }));
@@ -96,41 +92,110 @@ function initWheel(items) {
 }
 
 function drawWheel() {
-    const centerX = canvas.width / 2;
-    const centerY = canvas.height / 2;
-    const radius = canvas.width / 2;
-    const IMAGE_SIZE = 70;
-    const IMAGE_RADIUS = IMAGE_SIZE / 2;
-    const IMAGE_DIST = radius * 0.65;
+    const W = canvas.width;
+    const cx = W / 2;
+    const cy = W / 2;
+    const outerR = W / 2;        // 300
+    const RIM_W = 22;
+    const discR = outerR - RIM_W; // 278
+    const IMG_SIZE = 82;
+    const IMG_RADIUS = IMG_SIZE / 2;
+    const IMG_DIST = discR * 0.65; // ~181
 
+    ctx.clearRect(0, 0, W, W);
+
+    // Layer 1: Outer decorative rim
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+    ctx.fillStyle = '#0d1520';
+    ctx.fill();
+
+    // Layer 2: Sector fills up to discR
+    sectors.forEach((sector, i) => {
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, discR, sector.startAngle, sector.endAngle);
+        ctx.closePath();
+        ctx.fillStyle = SECTOR_COLORS[i % SECTOR_COLORS.length];
+        ctx.fill();
+    });
+
+    // Layer 3: Sector divider lines from centre to outer rim
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    sectors.forEach(sector => {
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        const x = cx + outerR * Math.cos(sector.startAngle);
+        const y = cy + outerR * Math.sin(sector.startAngle);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+    });
+
+    // Layer 4: Circular images with white border ring
     sectors.forEach(sector => {
         const mid = sector.startAngle + (sector.endAngle - sector.startAngle) / 2;
 
-        // Draw sector slice
-        ctx.beginPath();
-        ctx.moveTo(centerX, centerY);
-        ctx.arc(centerX, centerY, radius, sector.startAngle, sector.endAngle);
-        ctx.fillStyle = sector.color;
-        ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-        ctx.stroke();
-
-        // Draw thumbnail image in a circular clip
         ctx.save();
-        ctx.translate(centerX, centerY);
+        ctx.translate(cx, cy);
         ctx.rotate(mid);
-        ctx.translate(IMAGE_DIST, 0);
+        ctx.translate(IMG_DIST, 0);
+
+        // White border ring drawn outside clip
         ctx.beginPath();
-        ctx.arc(0, 0, IMAGE_RADIUS + 4, 0, Math.PI * 2);
-        ctx.fillStyle = 'white';
+        ctx.arc(0, 0, IMG_RADIUS + 2, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fill();
+
+        // Clip and draw image (cover-scale so shorter side fills the circle)
         ctx.beginPath();
-        ctx.arc(0, 0, IMAGE_RADIUS, 0, Math.PI * 2);
+        ctx.arc(0, 0, IMG_RADIUS, 0, Math.PI * 2);
         ctx.clip();
-        ctx.drawImage(sector.imgObject, -IMAGE_RADIUS, -IMAGE_RADIUS, IMAGE_SIZE, IMAGE_SIZE);
+        const iw = sector.imgObject.naturalWidth;
+        const ih = sector.imgObject.naturalHeight;
+        const scale = Math.max(IMG_SIZE / iw, IMG_SIZE / ih);
+        const dw = iw * scale;
+        const dh = ih * scale;
+        ctx.drawImage(sector.imgObject, -dw / 2, -dh / 2, dw, dh);
         ctx.restore();
     });
+
+    // Layer 5: Rim tick marks at each sector boundary inside the rim band
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+    sectors.forEach(sector => {
+        const angle = sector.startAngle;
+        ctx.beginPath();
+        ctx.moveTo(cx + discR * Math.cos(angle), cy + discR * Math.sin(angle));
+        ctx.lineTo(cx + outerR * Math.cos(angle), cy + outerR * Math.sin(angle));
+        ctx.stroke();
+    });
+
+    // Layer 6: Rim dots — one per sector centred on the arc in the rim band
+    const dotR = (discR + outerR) / 2;
+    sectors.forEach(sector => {
+        const mid = sector.startAngle + (sector.endAngle - sector.startAngle) / 2;
+        ctx.beginPath();
+        ctx.arc(cx + dotR * Math.cos(mid), cy + dotR * Math.sin(mid), 3, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.28)';
+        ctx.fill();
+    });
+
+    // Layer 7: Edge rings on inner and outer rim edge
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, discR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR - 1, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Layer 8: Centre backing disc (sits under the HTML hub element)
+    ctx.beginPath();
+    ctx.arc(cx, cy, W * 0.13, 0, Math.PI * 2);
+    ctx.fillStyle = '#1a2332';
+    ctx.fill();
 }
 
 
@@ -174,6 +239,10 @@ function syncConfigFromState(data) {
     } else {
         globalTimerEndMs = null;
         updateGlobalTimerUI(data.config.global_time_remaining);
+    }
+
+    if (data.config.global_timer_size !== undefined) {
+        globalTimerEl.style.fontSize = data.config.global_timer_size + 'rem';
     }
 
     // Link the result timer to the global game timer.
