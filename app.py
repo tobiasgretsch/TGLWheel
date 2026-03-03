@@ -41,12 +41,14 @@ game_state = {
     "command_id": 0,
     "command": None,
     "scores": {"left": 0, "right": 0},
+    "show_events": False,
     "config": {
         "result_duration": 60,
         "global_time_remaining": 600,
         "global_timer_running": False,
         "global_timer_start": None,  # time.time() when the timer was last started
         "global_timer_size": 3.0,   # rem units for the on-screen timer font size
+        "score_size": 5.0,          # rem units for the score digits
     },
 }
 
@@ -72,6 +74,7 @@ def _state_snapshot():
         "command_id": game_state["command_id"],
         "command": game_state["command"],
         "scores": dict(game_state["scores"]),
+        "show_events": game_state["show_events"],
         "config": {
             **game_state["config"],
             "global_time_remaining": _effective_remaining(),
@@ -156,6 +159,13 @@ def send_command():
                 game_state["config"]["global_time_remaining"] = int(payload["global_time"])
                 game_state["config"]["global_timer_running"] = False
                 game_state["config"]["global_timer_start"] = None
+
+        elif action == "set_score_size":
+            size = float(payload.get("size", 5.0))
+            game_state["config"]["score_size"] = max(1.0, min(20.0, size))
+
+        elif action == "toggle_events":
+            game_state["show_events"] = not game_state["show_events"]
 
         elif action == "set_timer_size":
             size = float(payload.get("size", 3.0))

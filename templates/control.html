@@ -211,6 +211,9 @@
                 <button class="btn-green" onclick="sendAction('spin')">RAD DREHEN</button>
                 <button class="btn-orange" onclick="sendAction('reset')">ZURÜCKSETZEN</button>
             </div>
+            <div class="row">
+                <button class="btn-blue" id="eventsBtn" onclick="toggleEvents()">EREIGNISSE ANZEIGEN</button>
+            </div>
         </div>
 
         <!-- TIMER -->
@@ -261,6 +264,15 @@
                 </div>
             </div>
             <button class="btn-orange btn-full" onclick="sendAction('reset_scores')">SPIELSTAND ZURÜCKSETZEN</button>
+
+            <hr>
+
+            <div class="row" style="align-items: center;">
+                <label>Punkte-Schriftgröße:</label>
+                <button class="btn-red"   style="flex:0; min-width:52px;" onclick="adjustScoreSize(-0.5)">−</button>
+                <span id="scoreSizeDisplay" style="min-width:60px; text-align:center; font-weight:700;">5.0 rem</span>
+                <button class="btn-green" style="flex:0; min-width:52px;" onclick="adjustScoreSize(+0.5)">+</button>
+            </div>
         </div>
     </div>
 
@@ -269,14 +281,24 @@
     <script>
         let statusTimeout = null;
         let currentTimerSize = 3.0;
+        let eventsVisible = false;
+        let currentScoreSize = 5.0;
 
-        // Sync initial timer size from server so the display stays consistent after refresh.
+        // Sync initial state from server on load.
         fetch('/api/check_status')
             .then(r => r.json())
             .then(s => {
                 if (s.config && s.config.global_timer_size !== undefined) {
                     currentTimerSize = s.config.global_timer_size;
                     document.getElementById('timerSizeDisplay').textContent = currentTimerSize.toFixed(1) + ' rem';
+                }
+                if (s.config && s.config.score_size !== undefined) {
+                    currentScoreSize = s.config.score_size;
+                    document.getElementById('scoreSizeDisplay').textContent = currentScoreSize.toFixed(1) + ' rem';
+                }
+                if (s.show_events !== undefined) {
+                    eventsVisible = s.show_events;
+                    updateEventsBtn();
                 }
             });
 
@@ -325,6 +347,23 @@
             currentTimerSize = Math.max(1.0, Math.min(12.0, currentTimerSize + delta));
             document.getElementById('timerSizeDisplay').textContent = currentTimerSize.toFixed(1) + ' rem';
             sendAction('set_timer_size', { size: currentTimerSize });
+        }
+
+        function adjustScoreSize(delta) {
+            currentScoreSize = Math.max(1.0, Math.min(20.0, currentScoreSize + delta));
+            document.getElementById('scoreSizeDisplay').textContent = currentScoreSize.toFixed(1) + ' rem';
+            sendAction('set_score_size', { size: currentScoreSize });
+        }
+
+        function toggleEvents() {
+            eventsVisible = !eventsVisible;
+            updateEventsBtn();
+            sendAction('toggle_events');
+        }
+
+        function updateEventsBtn() {
+            document.getElementById('eventsBtn').textContent =
+                eventsVisible ? 'EREIGNISSE VERBERGEN' : 'EREIGNISSE ANZEIGEN';
         }
     </script>
 </body>

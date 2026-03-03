@@ -18,6 +18,10 @@ const timerContent = document.querySelector('.timer-content');
 const globalTimerEl = document.getElementById('global-timer');
 const scoreLeftEl = document.getElementById('score-val-left');
 const scoreRightEl = document.getElementById('score-val-right');
+const scoreLabelLeftEl  = document.querySelector('#score-left  .score-label');
+const scoreLabelRightEl = document.querySelector('#score-right .score-label');
+const eventsPopupEl = document.getElementById('events-popup');
+const eventsGridEl = document.getElementById('events-grid');
 
 // --- STATE ---
 let sectors = [];
@@ -42,7 +46,7 @@ let appConfig = {
 
 // --- CONFIGURATION ---
 // Two alternating sector colours — deep red / dark navy — match the UI tokens.
-const SECTOR_COLORS = ['#B03030', '#1C3455'];
+const SECTOR_COLORS = ['#B03030', '#1C3455', '#FFFFFF'];
 
 // --- 1. INITIALIZATION ---
 // SSE: The server pushes state changes instantly instead of the client polling.
@@ -209,6 +213,11 @@ function handleStateUpdate(data) {
 
     syncConfigFromState(data);
 
+    if (data.show_events !== undefined) {
+        if (data.show_events) showEventsPopup();
+        else hideEventsPopup();
+    }
+
     if (data.command_id !== 0 && data.command_id !== lastCommandId) {
         lastCommandId = data.command_id;
         if (data.command === 'spin') {
@@ -243,6 +252,15 @@ function syncConfigFromState(data) {
 
     if (data.config.global_timer_size !== undefined) {
         globalTimerEl.style.fontSize = data.config.global_timer_size + 'rem';
+    }
+
+    if (data.config.score_size !== undefined) {
+        const s = data.config.score_size;
+        scoreLeftEl.style.fontSize  = s + 'rem';
+        scoreRightEl.style.fontSize = s + 'rem';
+        const labelSize = (s * 0.2).toFixed(2) + 'rem';
+        scoreLabelLeftEl.style.fontSize  = labelSize;
+        scoreLabelRightEl.style.fontSize = labelSize;
     }
 
     // Link the result timer to the global game timer.
@@ -385,7 +403,27 @@ function updateResultTimerUI(seconds) {
 }
 
 
-// --- 7. RESET ---
+// --- 7. EVENTS POPUP ---
+function showEventsPopup() {
+    fetch('/api/get_wheel_data')
+        .then(r => r.json())
+        .then(items => {
+            eventsGridEl.innerHTML = items.map(item => `
+                <div class="event-card">
+                    <img src="/static/${item.path}" alt="">
+                    <div class="event-card-text">${item.text}</div>
+                </div>
+            `).join('');
+            eventsPopupEl.classList.remove('hidden');
+        });
+}
+
+function hideEventsPopup() {
+    eventsPopupEl.classList.add('hidden');
+}
+
+
+// --- 8. RESET ---
 function resetApp() {
     // Cancel all in-flight timeouts so no deferred animation step can fire after reset.
     if (spinTimeoutId)   { clearTimeout(spinTimeoutId);   spinTimeoutId   = null; }

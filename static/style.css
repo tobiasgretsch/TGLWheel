@@ -274,8 +274,9 @@ canvas {
     -webkit-backdrop-filter: blur(12px);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    padding: var(--space-md) var(--space-md);
+    padding: var(--space-sm) var(--space-md);
     text-align: center;
+    width: max-content;
     min-width: clamp(90px, 14vmin, 140px);
     z-index: 400;
     box-shadow: var(--shadow);
@@ -290,7 +291,8 @@ canvas {
     text-transform: uppercase;
     letter-spacing: 0.12em;
     color: var(--color-text-muted);
-    margin-bottom: 4px;
+    line-height: 1;
+    margin-bottom: 2px;
 }
 
 .score-val {
@@ -298,4 +300,65 @@ canvas {
     font-weight: 800;
     color: var(--color-text);
     line-height: 1;
+    white-space: nowrap;
+}
+
+/* ============================================================
+   EVENTS POPUP
+   ============================================================ */
+#events-popup {
+    position: fixed;
+    inset: 0;
+    z-index: 800;
+    background: rgba(10, 15, 25, 0.92);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: clamp(16px, 3vh, 40px) clamp(16px, 3vw, 48px);
+}
+
+#events-popup.hidden {
+    display: none;
+}
+
+#events-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: clamp(10px, 1.8vmin, 24px);
+    width: 100%;
+    height: 100%;
+}
+
+.event-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: clamp(12px, 2vmin, 28px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(8px, 1.5vmin, 18px);
+    text-align: center;
+    min-height: 0;
+}
+
+.event-card img {
+    width: clamp(80px, 16vmin, 200px);
+    height: clamp(80px, 16vmin, 200px);
+    border-radius: 50%;
+    object-fit: cover;
+    border: 3px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    flex-shrink: 0;
+}
+
+.event-card-text {
+    font-size: clamp(0.85rem, 2vmin, 1.5rem);
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+    line-height: 1.35;
 }
