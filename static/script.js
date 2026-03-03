@@ -488,10 +488,6 @@ function resetApp() {
 
     wheelStage.classList.remove('hidden');
     updateResultTimerUI(appConfig.result_duration);
-
-    // Re-enable all events so the wheel shows the full set after reset.
-    disabledEvents = new Set();
-    disabledEventsJson = '[]';
     if (allItems.length > 0) rebuildWheel();
 
     // Snap the canvas back to 0° instantly (disabling the transition so the audience

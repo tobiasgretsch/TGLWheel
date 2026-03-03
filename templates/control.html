@@ -123,6 +123,7 @@
 
         button:active  { transform: scale(0.97); }
         button:hover   { opacity: 0.88; }
+        button:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
 
         .btn-green  { background: var(--btn-green); }
         .btn-blue   { background: var(--btn-blue); }
@@ -267,11 +268,11 @@
             <div class="row">
                 <label>Spielzeit (Minuten):</label>
                 <input type="number" id="globalTimeInput" value="10" min="1">
+                <button class="btn-blue" onclick="setTimers()">SETZEN</button>
             </div>
             <div class="row">
-                <button class="btn-blue"  onclick="setTimers()">SETZEN</button>
-                <button class="btn-green" onclick="toggleGlobalTimer('start')">START</button>
-                <button class="btn-red"   onclick="toggleGlobalTimer('stop')">PAUSE</button>
+                <button class="btn-green" id="startBtn" onclick="toggleGlobalTimer('start')">START</button>
+                <button class="btn-red" id="pauseBtn" onclick="toggleGlobalTimer('stop')">PAUSE</button>
             </div>
 
             <hr>
@@ -331,8 +332,10 @@
         let statusTimeout = null;
         let allEventItems = [];   // full list from API
         let disabledSet = new Set();
+        let timerEverStarted = false;
+        let timerRunning = false;
 
-        // --- SSE: keep checkboxes in sync with auto-disables from spins ---
+        // --- SSE: keep checkboxes and timer buttons in sync ---
         const ctrlStream = new EventSource('/api/stream');
         ctrlStream.onmessage = (event) => {
             const data = JSON.parse(event.data);
@@ -340,7 +343,23 @@
                 disabledSet = new Set(data.disabled_events);
                 syncCheckboxes();
             }
+            if (data.config) {
+                timerRunning = data.config.global_timer_running;
+                updateTimerBtns();
+            }
+            if (data.command === 'reset') {
+                timerEverStarted = false;
+                updateTimerBtns();
+            }
         };
+
+        function updateTimerBtns() {
+            const startBtn = document.getElementById('startBtn');
+            const pauseBtn = document.getElementById('pauseBtn');
+            startBtn.textContent = timerEverStarted ? 'WEITER' : 'START';
+            startBtn.disabled = timerRunning;
+            pauseBtn.disabled = !timerRunning;
+        }
 
         function syncCheckboxes() {
             document.querySelectorAll('#events-checklist input[type=checkbox]').forEach(cb => {
@@ -402,6 +421,15 @@
                     eventsVisible = s.show_events;
                     updateEventsBtn();
                 }
+                // If timer is running or has been started (time < full configured value), show WEITER.
+                if (s.config) {
+                    const configured = parseInt(document.getElementById('globalTimeInput').value, 10) * 60;
+                    timerRunning = s.config.global_timer_running;
+                    if (timerRunning || s.config.global_time_remaining < configured - 1) {
+                        timerEverStarted = true;
+                    }
+                    updateTimerBtns();
+                }
             });
 
         function showStatus(ok, text) {
@@ -432,6 +460,9 @@
         function setTimers() {
             const globalMin = parseInt(document.getElementById('globalTimeInput').value, 10);
             if (isNaN(globalMin) || globalMin < 1) { showStatus(false, 'Ungültiger Wert'); return; }
+            timerEverStarted = false;
+            timerRunning = false;
+            updateTimerBtns();
             sendAction('set_timers', { global_time: globalMin * 60 });
         }
 
@@ -442,6 +473,13 @@
         }
 
         function toggleGlobalTimer(state) {
+            if (state === 'start') {
+                timerEverStarted = true;
+                timerRunning = true;
+            } else {
+                timerRunning = false;
+            }
+            updateTimerBtns();
             sendAction('control_global_timer', { state });
         }
 
