@@ -42,6 +42,7 @@ game_state = {
     "command": None,
     "scores": {"left": 0, "right": 0},
     "show_events": False,
+    "disabled_events": [],        # filenames removed from the wheel
     "config": {
         "result_duration": 60,
         "global_time_remaining": 600,
@@ -75,6 +76,7 @@ def _state_snapshot():
         "command": game_state["command"],
         "scores": dict(game_state["scores"]),
         "show_events": game_state["show_events"],
+        "disabled_events": list(game_state["disabled_events"]),
         "config": {
             **game_state["config"],
             "global_time_remaining": _effective_remaining(),
@@ -163,6 +165,17 @@ def send_command():
         elif action == "set_score_size":
             size = float(payload.get("size", 5.0))
             game_state["config"]["score_size"] = max(1.0, min(20.0, size))
+
+        elif action == "reset":
+            game_state["disabled_events"] = []
+
+        elif action == "disable_event":
+            filename = payload.get("filename")
+            if filename and filename not in game_state["disabled_events"]:
+                game_state["disabled_events"].append(filename)
+
+        elif action == "set_disabled_events":
+            game_state["disabled_events"] = list(payload.get("events", []))
 
         elif action == "toggle_events":
             game_state["show_events"] = not game_state["show_events"]

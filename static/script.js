@@ -24,6 +24,9 @@ const eventsPopupEl = document.getElementById('events-popup');
 const eventsGridEl = document.getElementById('events-grid');
 
 // --- STATE ---
+let allItems = [];             // full item list, never filtered
+let disabledEvents = new Set();
+let disabledEventsJson = '[]'; // used to detect changes in SSE updates
 let sectors = [];
 let currentRotation = 0;
 let isSpinning = false;
@@ -84,10 +87,21 @@ setInterval(() => {
 
 
 function initWheel(items) {
-    const arcSize = (2 * Math.PI) / items.length;
-    sectors = items.map((item, i) => ({
+    allItems = items;
+    rebuildWheel();
+}
+
+function rebuildWheel() {
+    const active = allItems.filter(item => {
+        const filename = item.src.split('/').pop();
+        return !disabledEvents.has(filename);
+    });
+    if (active.length === 0) return;
+    const arcSize = (2 * Math.PI) / active.length;
+    sectors = active.map((item, i) => ({
         imgObject: item.imgObject,
         src: '/static/' + item.src,
+        filename: item.src.split('/').pop(),
         text: item.text,
         startAngle: i * arcSize,
         endAngle: (i + 1) * arcSize,
@@ -213,6 +227,15 @@ function handleStateUpdate(data) {
 
     syncConfigFromState(data);
 
+    if (data.disabled_events !== undefined) {
+        const newJson = JSON.stringify([...data.disabled_events].sort());
+        if (newJson !== disabledEventsJson) {
+            disabledEventsJson = newJson;
+            disabledEvents = new Set(data.disabled_events);
+            if (allItems.length > 0) rebuildWheel();
+        }
+    }
+
     if (data.show_events !== undefined) {
         if (data.show_events) showEventsPopup();
         else hideEventsPopup();
@@ -286,7 +309,17 @@ function updateGlobalTimerUI(totalSec) {
 }
 
 
-// --- 5. SPIN LOGIC ---
+// --- 5. COMMAND HELPER ---
+function sendCommand(action, payload = {}) {
+    fetch('/api/send_command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, payload })
+    });
+}
+
+
+// --- 6. SPIN LOGIC ---
 function startSpinSequence() {
     if (sectors.length === 0 || isSpinning || wheelStage.classList.contains('hidden')) return;
     isSpinning = true;
@@ -310,7 +343,9 @@ function startSpinSequence() {
     // Store the ID so resetApp() can cancel it if RESET is pressed mid-spin.
     spinTimeoutId = setTimeout(() => {
         spinTimeoutId = null;
-        startWinAnimation(sectors[winningIndex]);
+        const winner = sectors[winningIndex];
+        startWinAnimation(winner);
+        sendCommand('disable_event', { filename: winner.filename });
     }, SPIN_DURATION_MS);
 }
 
@@ -453,6 +488,11 @@ function resetApp() {
 
     wheelStage.classList.remove('hidden');
     updateResultTimerUI(appConfig.result_duration);
+
+    // Re-enable all events so the wheel shows the full set after reset.
+    disabledEvents = new Set();
+    disabledEventsJson = '[]';
+    if (allItems.length > 0) rebuildWheel();
 
     // Snap the canvas back to 0° instantly (disabling the transition so the audience
     // does not see a 5-second reverse spin). currentRotation is reset so the next

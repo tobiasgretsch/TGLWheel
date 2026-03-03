@@ -181,6 +181,50 @@
             margin-top: 12px;
         }
 
+        /* --- EVENT CHECKLIST --- */
+        .event-check-item {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 12px 14px;
+            border-radius: var(--radius-sm);
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--color-border);
+            cursor: pointer;
+            margin-bottom: 8px;
+            min-height: 66px;
+            user-select: none;
+            transition: opacity 0.2s;
+        }
+
+        .event-check-item:last-child { margin-bottom: 0; }
+
+        .event-check-item input[type=checkbox] {
+            width: 28px;
+            height: 28px;
+            cursor: pointer;
+            accent-color: var(--btn-green);
+            flex-shrink: 0;
+        }
+
+        .event-check-item img {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            object-fit: cover;
+            flex-shrink: 0;
+        }
+
+        .event-check-item span {
+            font-size: 1rem;
+            font-weight: 600;
+            flex: 1;
+        }
+
+        .event-check-item.event-off {
+            opacity: 0.38;
+        }
+
         /* --- STATUS TOAST --- */
         #status-msg {
             position: fixed;
@@ -274,12 +318,70 @@
                 <button class="btn-green" style="flex:0; min-width:52px;" onclick="adjustScoreSize(+0.5)">+</button>
             </div>
         </div>
+        <!-- EREIGNISSE AUF DEM RAD -->
+        <div class="panel">
+            <h2>Ereignisse auf dem Rad</h2>
+            <div id="events-checklist"></div>
+        </div>
     </div>
 
     <div id="status-msg"></div>
 
     <script>
         let statusTimeout = null;
+        let allEventItems = [];   // full list from API
+        let disabledSet = new Set();
+
+        // --- SSE: keep checkboxes in sync with auto-disables from spins ---
+        const ctrlStream = new EventSource('/api/stream');
+        ctrlStream.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.disabled_events !== undefined) {
+                disabledSet = new Set(data.disabled_events);
+                syncCheckboxes();
+            }
+        };
+
+        function syncCheckboxes() {
+            document.querySelectorAll('#events-checklist input[type=checkbox]').forEach(cb => {
+                const active = !disabledSet.has(cb.dataset.filename);
+                cb.checked = active;
+                cb.closest('label').classList.toggle('event-off', !active);
+            });
+        }
+
+        function loadEventChecklist() {
+            fetch('/api/get_wheel_data').then(r => r.json()).then(items => {
+                allEventItems = items;
+                fetch('/api/check_status').then(r => r.json()).then(s => {
+                    disabledSet = new Set(s.disabled_events || []);
+                    const container = document.getElementById('events-checklist');
+                    container.innerHTML = items.map(item => {
+                        const filename = item.path.split('/').pop();
+                        const active = !disabledSet.has(filename);
+                        return `<label class="event-check-item${active ? '' : ' event-off'}">
+                            <input type="checkbox" ${active ? 'checked' : ''}
+                                   data-filename="${filename}"
+                                   onchange="onEventCheckChange(this)">
+                            <img src="/static/${item.path}" alt="">
+                            <span>${item.text}</span>
+                        </label>`;
+                    }).join('');
+                });
+            });
+        }
+
+        function onEventCheckChange(cb) {
+            cb.closest('label').classList.toggle('event-off', !cb.checked);
+            const disabled = [];
+            document.querySelectorAll('#events-checklist input[type=checkbox]').forEach(c => {
+                if (!c.checked) disabled.push(c.dataset.filename);
+            });
+            disabledSet = new Set(disabled);
+            sendAction('set_disabled_events', { events: disabled });
+        }
+
+        loadEventChecklist();
         let currentTimerSize = 3.0;
         let eventsVisible = false;
         let currentScoreSize = 5.0;
