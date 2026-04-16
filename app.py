@@ -426,8 +426,12 @@ def _handle_create_teams(payload):
     n = team_state["settings"]["num_teams"]
     if len(players) < n:
         return
-    shuffled = list(players)
-    random.shuffle(shuffled)
+
+    goalkeepers = [p for p in players if p.get("position") == "goalkeeper"]
+    field_players = [p for p in players if p.get("position") != "goalkeeper"]
+    random.shuffle(goalkeepers)
+    random.shuffle(field_players)
+
     teams = []
     for i in range(n):
         teams.append({
@@ -435,8 +439,15 @@ def _handle_create_teams(payload):
             "color": TEAM_COLORS[i % len(TEAM_COLORS)],
             "players": [],
         })
-    for idx, player in enumerate(shuffled):
-        teams[idx % n]["players"].append(player["id"])
+
+    # Assign one goalkeeper per team first, then remaining goalkeepers round-robin
+    for idx, gk in enumerate(goalkeepers):
+        teams[idx % n]["players"].append(gk["id"])
+
+    # Distribute field players round-robin across teams
+    for idx, fp in enumerate(field_players):
+        teams[idx % n]["players"].append(fp["id"])
+
     team_state["teams"] = teams
     team_state["schedule"] = _generate_round_robin(teams, team_state["settings"]["num_games"])
     team_state["phase"] = "teams_created"
@@ -576,7 +587,10 @@ def register_player():
         if name.lower() in existing:
             return jsonify({"status": "error", "message": "Name bereits registriert"}), 409
 
-        player = {"id": uuid.uuid4().hex[:12], "name": name}
+        position = data.get("position", "field")
+        if position not in ("field", "goalkeeper"):
+            position = "field"
+        player = {"id": uuid.uuid4().hex[:12], "name": name, "position": position}
         team_state["players"].append(player)
         _save_team_state()
         snapshot = _team_state_snapshot()

@@ -72,6 +72,31 @@
         button:active { transform: scale(0.97); }
         button:hover { opacity: 0.88; }
         button:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+        .position-toggle {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .pos-btn {
+            flex: 1;
+            padding: 12px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            font-weight: 600;
+            color: rgba(255,255,255,0.5);
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.15s;
+            letter-spacing: 0;
+        }
+        .pos-btn:hover { border-color: rgba(255,255,255,0.25); }
+        .pos-btn.active {
+            color: #ffffff;
+            background: rgba(255,255,255,0.12);
+            border-color: rgba(255,255,255,0.35);
+        }
         .msg {
             margin-top: 16px;
             padding: 12px;
@@ -89,6 +114,10 @@
         <h1>Spieleranmeldung</h1>
         <p>Gib deinen Namen ein, um teilzunehmen.</p>
         <input type="text" id="nameInput" placeholder="Dein Name" maxlength="50" autocomplete="off">
+        <div class="position-toggle">
+            <button type="button" id="btnField" class="pos-btn active">Feldspieler</button>
+            <button type="button" id="btnGoalkeeper" class="pos-btn">Torwart</button>
+        </div>
         <button id="submitBtn">ANMELDEN</button>
         <div id="msg" class="msg"></div>
     </div>
@@ -97,6 +126,20 @@
         const nameInput = document.getElementById('nameInput');
         const submitBtn = document.getElementById('submitBtn');
         const msgEl = document.getElementById('msg');
+        const btnField = document.getElementById('btnField');
+        const btnGoalkeeper = document.getElementById('btnGoalkeeper');
+        let selectedPosition = 'field';
+
+        btnField.addEventListener('click', () => {
+            selectedPosition = 'field';
+            btnField.classList.add('active');
+            btnGoalkeeper.classList.remove('active');
+        });
+        btnGoalkeeper.addEventListener('click', () => {
+            selectedPosition = 'goalkeeper';
+            btnGoalkeeper.classList.add('active');
+            btnField.classList.remove('active');
+        });
 
         function showMsg(ok, text) {
             msgEl.textContent = text;
@@ -111,7 +154,7 @@
             fetch('/api/register_player', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name })
+                body: JSON.stringify({ name, position: selectedPosition })
             })
             .then(res => res.json().then(data => ({ ok: res.ok, data })))
             .then(({ ok, data }) => {

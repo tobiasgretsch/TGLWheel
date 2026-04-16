@@ -126,7 +126,7 @@ A second display flow for team-based play. Players self-register via QR code on 
 **`team_state` structure:**
 ```python
 {
-    "players": [{"id": "uuid-hex", "name": "Max"}],
+    "players": [{"id": "uuid-hex", "name": "Max", "position": "field"}],  # "field" | "goalkeeper"
     "teams": [{"name": "Team 1", "color": "#B03030", "players": ["uuid1"]}],
     "schedule": [{"game": 1, "home": "Team 1", "away": "Team 2", "score_home": None, "score_away": None}],
     "phase": "registration",  # "registration" | "teams_created"
@@ -137,7 +137,7 @@ A second display flow for team-based play. Players self-register via QR code on 
 **Team API actions** (`/api/team_command` POST, `action` field):
 | Action | Payload | Effect |
 |--------|---------|--------|
-| `create_teams` | — | Shuffle players into N teams, generate round-robin schedule |
+| `create_teams` | — | Shuffle players into N teams (goalkeepers distributed first, one per team), generate round-robin schedule |
 | `reset_teams` | — | Clear teams + schedule, keep players, phase → `registration` |
 | `reset_all` | — | Clear everything, phase → `registration` |
 | `remove_player` | `{id}` | Remove player by UUID (registration phase only) |
@@ -147,7 +147,7 @@ A second display flow for team-based play. Players self-register via QR code on 
 **Other team endpoints:**
 | Route | Method | Purpose |
 |-------|--------|---------|
-| `/api/register_player` | POST | Register a player `{name}` |
+| `/api/register_player` | POST | Register a player `{name, position?}` — position is `"field"` (default) or `"goalkeeper"` |
 | `/api/team_state` | GET | Returns current `team_state` snapshot |
 | `/api/team_stream` | GET | SSE stream for team state changes |
 | `/api/qr_code` | GET | Returns SVG QR code pointing to `/register` |

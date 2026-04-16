@@ -95,6 +95,13 @@ function renderPlayerList(players) {
             chip.className = 'player-chip';
             chip.dataset.playerId = player.id;
 
+            if (player.position === 'goalkeeper') {
+                const badge = document.createElement('span');
+                badge.className = 'gk-badge';
+                badge.textContent = 'TW';
+                chip.appendChild(badge);
+            }
+
             const nameSpan = document.createElement('span');
             nameSpan.textContent = player.name;
 
@@ -107,7 +114,11 @@ function renderPlayerList(players) {
 // --- TEAM COLUMNS ---
 function renderTeamColumns(data) {
     const playerMap = {};
-    data.players.forEach(p => { playerMap[p.id] = p.name; });
+    const positionMap = {};
+    data.players.forEach(p => {
+        playerMap[p.id] = p.name;
+        positionMap[p.id] = p.position;
+    });
 
     teamColumnsEl.innerHTML = '';
     data.teams.forEach(team => {
@@ -125,7 +136,14 @@ function renderTeamColumns(data) {
         team.players.forEach(pid => {
             const el = document.createElement('div');
             el.className = 'team-player';
-            el.textContent = playerMap[pid] || pid;
+            if (positionMap[pid] === 'goalkeeper') {
+                const badge = document.createElement('span');
+                badge.className = 'gk-badge';
+                badge.textContent = 'TW';
+                el.appendChild(badge);
+            }
+            const nameSpan = document.createTextNode(playerMap[pid] || pid);
+            el.appendChild(nameSpan);
             body.appendChild(el);
         });
 
