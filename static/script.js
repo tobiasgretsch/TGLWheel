@@ -260,6 +260,15 @@ function handleStateUpdate(data) {
         }
     }
 
+    // Update score labels from active match
+    if (data.active_match) {
+        scoreLabelLeftEl.textContent  = data.active_match.home;
+        scoreLabelRightEl.textContent = data.active_match.away;
+    } else {
+        scoreLabelLeftEl.textContent  = 'Heim';
+        scoreLabelRightEl.textContent = 'Gast';
+    }
+
     if (data.show_events !== undefined) {
         if (data.show_events) showEventsPopup();
         else hideEventsPopup();

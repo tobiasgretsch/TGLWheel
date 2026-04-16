@@ -65,8 +65,8 @@ h2 {
 }
 
 #qr-img {
-    width: clamp(200px, 30vmin, 360px);
-    height: clamp(200px, 30vmin, 360px);
+    width: clamp(300px, 50vmin, 560px);
+    height: clamp(300px, 50vmin, 560px);
     border-radius: var(--radius-md);
 }
 

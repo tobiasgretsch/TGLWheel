@@ -2,9 +2,9 @@
 'use strict';
 
 // --- CONSTANTS ---
-const ANIMATION_STAGGER_MS = 120;
-const SHUFFLE_ITERATIONS = 4;
-const SHUFFLE_INTERVAL_MS = 350;
+const ANIMATION_STAGGER_MS = 300;
+const SHUFFLE_ITERATIONS = 6;
+const SHUFFLE_INTERVAL_MS = 500;
 const BATCH_ANIMATION_THRESHOLD = 20;
 
 // --- DOM ELEMENTS ---
@@ -265,7 +265,7 @@ function runTeamAnimation(data) {
             cards.forEach(card => { card.style.transform = ''; });
 
             // Phase 2: Build team columns and distribute
-            setTimeout(() => distributeCards(data, playerMap, cards), 300);
+            setTimeout(() => distributeCards(data, playerMap, cards), 600);
         }
     }, SHUFFLE_INTERVAL_MS);
 }
@@ -300,7 +300,7 @@ function distributeCards(data, playerMap, cards) {
     });
 
     // Fade out cards one by one and add to team columns
-    let delay = 400; // initial delay after columns appear
+    let delay = 800; // initial delay after columns appear
     cards.forEach((card, i) => {
         const pid = card.dataset.playerId;
         const teamIdx = assignment[pid];

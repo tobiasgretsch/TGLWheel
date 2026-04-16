@@ -115,9 +115,10 @@
             .then(res => res.json().then(data => ({ ok: res.ok, data })))
             .then(({ ok, data }) => {
                 if (ok) {
-                    showMsg(true, 'Erfolgreich angemeldet!');
+                    showMsg(true, 'Erfolgreich angemeldet! Weiterleitung...');
                     nameInput.value = '';
                     nameInput.disabled = true;
+                    setTimeout(() => { window.location.href = '/teams'; }, 1500);
                 } else {
                     showMsg(false, data.message || 'Fehler bei der Anmeldung.');
                     submitBtn.disabled = false;

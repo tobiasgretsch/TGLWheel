@@ -307,6 +307,36 @@
         }
         .btn-link:hover { opacity: 0.8; }
 
+        /* --- MATCH SELECTOR --- */
+        .match-select {
+            width: 100%;
+            padding: 12px 14px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            font-weight: 600;
+            color: var(--color-text);
+            background: rgba(255,255,255,0.08);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-sm);
+            outline: none;
+            appearance: none;
+            cursor: pointer;
+            margin-bottom: 12px;
+        }
+        .match-select:focus { border-color: rgba(255,255,255,0.35); }
+        .match-select option { background: #1a2332; color: #fff; }
+        .match-info {
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--color-text-muted);
+            margin-bottom: 12px;
+        }
+        .match-info.active {
+            color: var(--btn-green);
+            font-weight: 700;
+            font-size: 0.85rem;
+        }
+
         /* --- STATUS TOAST --- */
         #status-msg {
             position: fixed;
@@ -400,6 +430,19 @@
                 <button class="btn-green btn-square" data-action="score-size-up">+</button>
             </div>
         </div>
+        <!-- AKTUELLES SPIEL -->
+        <div id="match-panel" class="panel" style="display:none">
+            <h2>Aktuelles Spiel</h2>
+            <select id="matchSelect" class="match-select">
+                <option value="-1">— Spiel wählen —</option>
+            </select>
+            <div id="matchInfo" class="match-info">Kein Spiel ausgewählt</div>
+            <div class="row">
+                <button class="btn-green" data-action="activate-match" style="flex:1">SPIEL LADEN</button>
+                <button class="btn-orange" data-action="confirm-score" style="flex:1">ERGEBNIS ÜBERNEHMEN</button>
+            </div>
+        </div>
+
         <!-- TURNIER -->
         <div class="panel">
             <h2>Turnier</h2>
@@ -610,6 +653,74 @@
                 eventsVisible ? 'EREIGNISSE VERBERGEN' : 'EREIGNISSE ANZEIGEN';
         }
 
+        // --- MATCH SELECTOR ---
+        const matchPanel = document.getElementById('match-panel');
+        const matchSelect = document.getElementById('matchSelect');
+        const matchInfo = document.getElementById('matchInfo');
+        let tournamentSchedule = [];
+
+        function loadTournamentSchedule() {
+            fetch('/api/team_state')
+                .then(r => r.json())
+                .then(data => {
+                    tournamentSchedule = data.schedule || [];
+                    if (data.phase === 'teams_created' && tournamentSchedule.length > 0) {
+                        matchPanel.style.display = '';
+                        populateMatchSelect(tournamentSchedule);
+                    } else {
+                        matchPanel.style.display = 'none';
+                    }
+                })
+                .catch(() => { matchPanel.style.display = 'none'; });
+        }
+
+        function populateMatchSelect(schedule) {
+            matchSelect.innerHTML = '<option value="-1">— Spiel wählen —</option>';
+            schedule.forEach((m, i) => {
+                const played = m.score_home !== null;
+                const label = `Spiel ${m.game}: ${m.home} vs ${m.away}` +
+                    (played ? ` (${m.score_home}:${m.score_away})` : '');
+                const opt = document.createElement('option');
+                opt.value = i;
+                opt.textContent = label;
+                if (played) opt.style.opacity = '0.5';
+                matchSelect.appendChild(opt);
+            });
+        }
+
+        matchSelect.addEventListener('change', () => {
+            const idx = parseInt(matchSelect.value, 10);
+            if (idx >= 0 && idx < tournamentSchedule.length) {
+                const m = tournamentSchedule[idx];
+                matchInfo.textContent = `${m.home} vs ${m.away}`;
+                matchInfo.className = 'match-info';
+            } else {
+                matchInfo.textContent = 'Kein Spiel ausgewählt';
+                matchInfo.className = 'match-info';
+            }
+        });
+
+        function activateMatch() {
+            const idx = parseInt(matchSelect.value, 10);
+            if (idx < 0) { showStatus(false, 'Bitte Spiel wählen'); return; }
+            sendAction('set_active_match', { game_index: idx });
+            const m = tournamentSchedule[idx];
+            matchInfo.textContent = `Aktiv: ${m.home} vs ${m.away}`;
+            matchInfo.className = 'match-info active';
+        }
+
+        function confirmMatchScore() {
+            sendAction('confirm_match_score');
+            matchInfo.textContent = 'Ergebnis gespeichert!';
+            matchInfo.className = 'match-info';
+            matchSelect.value = '-1';
+            // Refresh the schedule to show updated scores
+            setTimeout(loadTournamentSchedule, 500);
+        }
+
+        // Load schedule on page load
+        loadTournamentSchedule();
+
         // --- TOURNAMENT SETTINGS ---
         const tournamentPopup = document.getElementById('tournament-popup');
 
@@ -653,6 +764,7 @@
                 if (!res.ok) throw new Error('Server error');
                 showStatus(true, 'Einstellungen gespeichert');
                 closeTournament();
+                setTimeout(loadTournamentSchedule, 500);
             })
             .catch(err => showStatus(false, 'Fehler: ' + err.message));
         }
@@ -703,6 +815,12 @@
                     break;
                 case 'score-size-down':
                     adjustScoreSize(-0.5);
+                    break;
+                case 'activate-match':
+                    activateMatch();
+                    break;
+                case 'confirm-score':
+                    confirmMatchScore();
                     break;
                 case 'open-tournament':
                     openTournament();

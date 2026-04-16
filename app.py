@@ -103,6 +103,7 @@ game_state = {
     "scores": {"left": 0, "right": 0},
     "show_events": False,
     "disabled_events": [],
+    "active_match": None,  # {"game_index": 0, "home": "Team 1", "away": "Team 2"}
     "config": {
         "result_duration": 60,
         "global_time_remaining": 600,
@@ -130,6 +131,7 @@ def _state_snapshot():
         "scores": dict(game_state["scores"]),
         "show_events": game_state["show_events"],
         "disabled_events": list(game_state["disabled_events"]),
+        "active_match": game_state["active_match"],
         "config": {
             **game_state["config"],
             "global_time_remaining": _effective_remaining(),
@@ -364,6 +366,41 @@ def _handle_control_global_timer(payload):
         cfg["global_timer_start"] = None
 
 
+def _handle_set_active_match(payload):
+    idx = _safe_int(payload.get("game_index"), -1)
+    with _team_lock:
+        schedule = team_state.get("schedule", [])
+        if 0 <= idx < len(schedule):
+            match = schedule[idx]
+            game_state["active_match"] = {
+                "game_index": idx,
+                "home": match["home"],
+                "away": match["away"],
+            }
+            game_state["scores"]["left"] = 0
+            game_state["scores"]["right"] = 0
+        elif idx == -1:
+            game_state["active_match"] = None
+
+
+def _handle_confirm_match_score(payload):
+    active = game_state["active_match"]
+    if not active:
+        return
+    idx = active["game_index"]
+    score_home = game_state["scores"]["left"]
+    score_away = game_state["scores"]["right"]
+    with _team_lock:
+        if 0 <= idx < len(team_state["schedule"]):
+            team_state["schedule"][idx]["score_home"] = score_home
+            team_state["schedule"][idx]["score_away"] = score_away
+            _save_team_state()
+            _team_sse.broadcast(_team_state_snapshot())
+    game_state["active_match"] = None
+    game_state["scores"]["left"] = 0
+    game_state["scores"]["right"] = 0
+
+
 _ACTION_HANDLERS = {
     "spin":                 _handle_spin,
     "update_score":         _handle_update_score,
@@ -376,6 +413,8 @@ _ACTION_HANDLERS = {
     "toggle_events":        _handle_toggle_events,
     "set_timer_size":       _handle_set_timer_size,
     "control_global_timer": _handle_control_global_timer,
+    "set_active_match":     _handle_set_active_match,
+    "confirm_match_score":  _handle_confirm_match_score,
 }
 
 
