@@ -446,6 +446,22 @@
         <!-- TURNIER -->
         <div class="panel">
             <h2>Turnier</h2>
+            <div class="row">
+                <button class="btn-green" data-action="create-teams">TEAMS ERSTELLEN</button>
+                <button class="btn-orange" data-action="reshuffle-teams">NEU MISCHEN</button>
+            </div>
+            <div class="row">
+                <button class="btn-red" data-action="reset-teams">TEAMS ZURÜCKSETZEN</button>
+                <button class="btn-red" data-action="reset-all-teams" style="background:transparent; border:2px solid var(--btn-red); color:var(--btn-red)">ALLES LÖSCHEN</button>
+            </div>
+            <hr>
+            <div class="row">
+                <select id="removePlayerSelect" class="match-select" style="margin-bottom:0; flex:1">
+                    <option value="">— Spieler entfernen —</option>
+                </select>
+                <button class="btn-red" data-action="remove-player" style="flex:0; min-width:100px">ENTFERNEN</button>
+            </div>
+            <hr>
             <button class="btn-blue" data-action="open-tournament" style="width:100%">TURNIEREINSTELLUNGEN</button>
         </div>
 
@@ -659,11 +675,15 @@
         const matchInfo = document.getElementById('matchInfo');
         let tournamentSchedule = [];
 
+        let teamPlayers = [];
+
         function loadTournamentSchedule() {
             fetch('/api/team_state')
                 .then(r => r.json())
                 .then(data => {
                     tournamentSchedule = data.schedule || [];
+                    teamPlayers = data.players || [];
+                    populateRemovePlayerSelect(teamPlayers);
                     if (data.phase === 'teams_created' && tournamentSchedule.length > 0) {
                         matchPanel.style.display = '';
                         populateMatchSelect(tournamentSchedule);
@@ -672,6 +692,17 @@
                     }
                 })
                 .catch(() => { matchPanel.style.display = 'none'; });
+        }
+
+        function populateRemovePlayerSelect(players) {
+            const sel = document.getElementById('removePlayerSelect');
+            sel.innerHTML = '<option value="">— Spieler entfernen —</option>';
+            players.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = p.name;
+                sel.appendChild(opt);
+            });
         }
 
         function populateMatchSelect(schedule) {
@@ -716,6 +747,27 @@
             matchSelect.value = '-1';
             // Refresh the schedule to show updated scores
             setTimeout(loadTournamentSchedule, 500);
+        }
+
+        function sendTeamCommand(action, payload = {}) {
+            fetch('/api/team_command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action, payload })
+            })
+            .then(res => {
+                if (!res.ok) return res.json().then(d => { throw new Error(d.message || 'Fehler'); });
+                showStatus(true, action + ' ausgeführt');
+                setTimeout(loadTournamentSchedule, 300);
+            })
+            .catch(err => showStatus(false, err.message));
+        }
+
+        function removeSelectedPlayer() {
+            const sel = document.getElementById('removePlayerSelect');
+            const id = sel.value;
+            if (!id) { showStatus(false, 'Bitte Spieler wählen'); return; }
+            sendTeamCommand('remove_player', { id });
         }
 
         // Load schedule on page load
@@ -815,6 +867,21 @@
                     break;
                 case 'score-size-down':
                     adjustScoreSize(-0.5);
+                    break;
+                case 'create-teams':
+                    sendTeamCommand('create_teams');
+                    break;
+                case 'reshuffle-teams':
+                    sendTeamCommand('create_teams');
+                    break;
+                case 'reset-teams':
+                    sendTeamCommand('reset_teams');
+                    break;
+                case 'reset-all-teams':
+                    sendTeamCommand('reset_all');
+                    break;
+                case 'remove-player':
+                    removeSelectedPlayer();
                     break;
                 case 'activate-match':
                     activateMatch();

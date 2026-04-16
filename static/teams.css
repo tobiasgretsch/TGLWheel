@@ -129,42 +129,6 @@ h2 {
     to   { opacity: 1; transform: scale(1); }
 }
 
-.player-chip .remove-btn {
-    background: none;
-    border: none;
-    color: var(--color-text-muted);
-    font-size: 1.1rem;
-    cursor: pointer;
-    padding: 0 2px;
-    line-height: 1;
-}
-.player-chip .remove-btn:hover { color: var(--color-accent); }
-
-/* --- ACTION BUTTONS --- */
-.btn-action {
-    padding: 16px 32px;
-    font-size: 1rem;
-    font-family: inherit;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    border: none;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    color: #fff;
-    transition: opacity 0.15s, transform 0.1s;
-}
-.btn-action:active { transform: scale(0.97); }
-.btn-action:hover { opacity: 0.88; }
-.btn-action:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
-
-.btn-green  { background: var(--btn-green); }
-.btn-orange { background: var(--btn-orange); }
-.btn-red    { background: var(--btn-red); }
-.btn-red-outline {
-    background: transparent;
-    border: 2px solid var(--btn-red);
-    color: var(--btn-red);
-}
 
 /* ============================================================
    ANIMATION PHASE
@@ -328,14 +292,3 @@ h2 {
     font-size: 0.75em;
 }
 
-/* --- TEAMS ACTIONS --- */
-.teams-actions {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-    justify-content: center;
-}
-
-.teams-actions .btn-action {
-    min-width: 180px;
-}

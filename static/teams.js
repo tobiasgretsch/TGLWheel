@@ -14,10 +14,6 @@ const phaseTeams        = document.getElementById('phase-teams');
 const playerListEl      = document.getElementById('player-list');
 const playerCountEl     = document.getElementById('player-count');
 const qrUrlEl           = document.getElementById('qr-url');
-const btnCreateTeams    = document.getElementById('btn-create-teams');
-const btnReshuffle      = document.getElementById('btn-reshuffle');
-const btnResetTeams     = document.getElementById('btn-reset-teams');
-const btnResetAll       = document.getElementById('btn-reset-all');
 const teamColumnsEl     = document.getElementById('team-columns');
 const scheduleBodyEl    = document.getElementById('schedule-body');
 
@@ -39,41 +35,6 @@ eventSource.onmessage = (event) => {
 // --- QR URL ---
 qrUrlEl.textContent = window.location.origin + '/register';
 
-// --- EVENT LISTENERS ---
-btnCreateTeams.addEventListener('click', () => {
-    if (isAnimating) return;
-    sendTeamCommand('create_teams');
-});
-
-btnReshuffle.addEventListener('click', () => {
-    sendTeamCommand('create_teams');
-});
-
-btnResetTeams.addEventListener('click', () => {
-    sendTeamCommand('reset_teams');
-});
-
-btnResetAll.addEventListener('click', () => {
-    sendTeamCommand('reset_all');
-});
-
-playerListEl.addEventListener('click', (e) => {
-    const btn = e.target.closest('.remove-btn');
-    if (!btn) return;
-    sendTeamCommand('remove_player', { id: btn.dataset.playerId });
-});
-
-
-// --- COMMAND HELPER ---
-function sendTeamCommand(action, payload) {
-    fetch('/api/team_command', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, payload: payload || {} })
-    });
-}
-
-
 // --- STATE HANDLER ---
 function handleStateUpdate(data) {
     const prevPhase = currentState ? currentState.phase : null;
@@ -94,7 +55,6 @@ function renderPhase(data) {
     if (data.phase === 'registration') {
         showPhase(phaseRegistration);
         renderPlayerList(data.players);
-        updateCreateButton(data);
     } else {
         showPhase(phaseTeams);
         renderTeamColumns(data);
@@ -138,29 +98,11 @@ function renderPlayerList(players) {
             const nameSpan = document.createElement('span');
             nameSpan.textContent = player.name;
 
-            const removeBtn = document.createElement('button');
-            removeBtn.className = 'remove-btn';
-            removeBtn.dataset.playerId = player.id;
-            removeBtn.textContent = '\u00d7';
-            removeBtn.title = 'Entfernen';
-
             chip.appendChild(nameSpan);
-            chip.appendChild(removeBtn);
             playerListEl.appendChild(chip);
         }
     });
 }
-
-function updateCreateButton(data) {
-    const minPlayers = data.settings.num_teams;
-    btnCreateTeams.disabled = data.players.length < minPlayers;
-    if (data.players.length < minPlayers) {
-        btnCreateTeams.textContent = `TEAMS ERSTELLEN (min. ${minPlayers} Spieler)`;
-    } else {
-        btnCreateTeams.textContent = 'TEAMS ERSTELLEN';
-    }
-}
-
 
 // --- TEAM COLUMNS ---
 function renderTeamColumns(data) {
