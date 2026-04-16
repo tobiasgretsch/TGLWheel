@@ -1,17 +1,13 @@
 /* ============================================================
-   DESIGN TOKENS
+   SHARED TOKENS (from tokens.css)
+   ============================================================ */
+@import url('tokens.css');
+
+/* ============================================================
+   DISPLAY-SPECIFIC TOKENS
    ============================================================ */
 :root {
     --spin-duration: 5s; /* Must match SPIN_DURATION_MS in script.js */
-
-    /* Colors */
-    --color-bg:          #1a2332;
-    --color-surface:     rgba(255, 255, 255, 0.06);
-    --color-border:      rgba(255, 255, 255, 0.12);
-    --color-accent:      #e74c3c;
-    --color-accent-glow: rgba(231, 76, 60, 0.3);
-    --color-text:        #ffffff;
-    --color-text-muted:  rgba(255, 255, 255, 0.5);
 
     /* Responsive sizing */
     --wheel-size: clamp(280px, 70vmin, 580px);
@@ -28,12 +24,6 @@
     --space-sm: clamp(8px,  1.5vmin, 16px);
     --space-md: clamp(12px, 2vmin,   24px);
     --space-lg: clamp(20px, 3vmin,   44px);
-
-    /* Shape */
-    --radius-sm: 10px;
-    --radius-md: 18px;
-    --radius-lg: 28px;
-    --shadow:    0 8px 32px rgba(0, 0, 0, 0.45);
 }
 
 /* ============================================================
@@ -325,11 +315,11 @@ canvas {
 
 #events-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    grid-template-rows: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(clamp(160px, 25vmin, 280px), 1fr));
+    grid-auto-rows: 1fr;
     gap: clamp(10px, 1.8vmin, 24px);
     width: 100%;
-    height: 100%;
+    align-content: center;
 }
 
 .event-card {

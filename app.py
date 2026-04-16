@@ -1,6 +1,7 @@
 import os
 import json
 import queue
+import random
 import time
 import threading
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context
@@ -40,6 +41,7 @@ def _try_put(q: queue.Queue, message: str) -> bool:
 game_state = {
     "command_id": 0,
     "command": None,
+    "winner_index": None,         # sector index chosen by server on spin
     "scores": {"left": 0, "right": 0},
     "show_events": False,
     "disabled_events": [],        # filenames removed from the wheel
@@ -60,6 +62,22 @@ def _next_command_id():
     return _command_counter
 
 
+def _safe_int(value, default):
+    """Convert value to int, returning default on failure."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value, default):
+    """Convert value to float, returning default on failure."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _effective_remaining():
     """Return remaining seconds, accounting for elapsed time if the timer is running."""
     cfg = game_state["config"]
@@ -74,6 +92,7 @@ def _state_snapshot():
     return {
         "command_id": game_state["command_id"],
         "command": game_state["command"],
+        "winner_index": game_state["winner_index"],
         "scores": dict(game_state["scores"]),
         "show_events": game_state["show_events"],
         "disabled_events": list(game_state["disabled_events"]),
@@ -130,6 +149,90 @@ def check_status():
         return jsonify(_state_snapshot())
 
 
+def _handle_spin(payload):
+    active = [img for img in get_images()
+              if img["filename"] not in game_state["disabled_events"]]
+    game_state["winner_index"] = random.randrange(len(active)) if active else None
+
+
+def _handle_update_score(payload):
+    side = payload.get("side")
+    change = payload.get("change", 0)
+    if side in ("left", "right"):
+        game_state["scores"][side] = max(0, game_state["scores"][side] + change)
+
+
+def _handle_reset_scores(payload):
+    game_state["scores"]["left"] = 0
+    game_state["scores"]["right"] = 0
+
+
+def _handle_set_timers(payload):
+    if "result_duration" in payload:
+        game_state["config"]["result_duration"] = _safe_int(
+            payload["result_duration"], game_state["config"]["result_duration"])
+    if "global_time" in payload:
+        game_state["config"]["global_time_remaining"] = _safe_int(
+            payload["global_time"], game_state["config"]["global_time_remaining"])
+        game_state["config"]["global_timer_running"] = False
+        game_state["config"]["global_timer_start"] = None
+
+
+def _handle_set_score_size(payload):
+    size = _safe_float(payload.get("size"), 5.0)
+    game_state["config"]["score_size"] = max(1.0, min(20.0, size))
+
+
+def _handle_reset(payload):
+    game_state["disabled_events"] = []
+
+
+def _handle_disable_event(payload):
+    filename = payload.get("filename")
+    if filename and filename not in game_state["disabled_events"]:
+        game_state["disabled_events"].append(filename)
+
+
+def _handle_set_disabled_events(payload):
+    game_state["disabled_events"] = list(payload.get("events", []))
+
+
+def _handle_toggle_events(payload):
+    game_state["show_events"] = not game_state["show_events"]
+
+
+def _handle_set_timer_size(payload):
+    size = _safe_float(payload.get("size"), 3.0)
+    game_state["config"]["global_timer_size"] = max(1.0, min(12.0, size))
+
+
+def _handle_control_global_timer(payload):
+    state = payload.get("state")
+    cfg = game_state["config"]
+    if state == "start" and not cfg["global_timer_running"]:
+        cfg["global_timer_running"] = True
+        cfg["global_timer_start"] = time.time()
+    elif state == "stop" and cfg["global_timer_running"]:
+        cfg["global_time_remaining"] = _effective_remaining()
+        cfg["global_timer_running"] = False
+        cfg["global_timer_start"] = None
+
+
+_ACTION_HANDLERS = {
+    "spin":                 _handle_spin,
+    "update_score":         _handle_update_score,
+    "reset_scores":         _handle_reset_scores,
+    "set_timers":           _handle_set_timers,
+    "set_score_size":       _handle_set_score_size,
+    "reset":                _handle_reset,
+    "disable_event":        _handle_disable_event,
+    "set_disabled_events":  _handle_set_disabled_events,
+    "toggle_events":        _handle_toggle_events,
+    "set_timer_size":       _handle_set_timer_size,
+    "control_global_timer": _handle_control_global_timer,
+}
+
+
 @app.route("/api/send_command", methods=["POST"])
 def send_command():
     data = request.json
@@ -138,64 +241,17 @@ def send_command():
     action = data.get("action")
     if not action:
         return jsonify({"status": "error", "message": "Missing action"}), 400
+
+    handler = _ACTION_HANDLERS.get(action)
+    if handler is None:
+        return jsonify({"status": "error", "message": f"Unknown action: {action}"}), 400
+
     payload = data.get("payload", {})
 
     with _state_lock:
         game_state["command_id"] = _next_command_id()
         game_state["command"] = action
-
-        if action == "update_score":
-            side = payload.get("side")
-            change = payload.get("change", 0)
-            if side in ("left", "right"):
-                game_state["scores"][side] = max(0, game_state["scores"][side] + change)
-
-        elif action == "reset_scores":
-            game_state["scores"]["left"] = 0
-            game_state["scores"]["right"] = 0
-
-        elif action == "set_timers":
-            if "result_duration" in payload:
-                game_state["config"]["result_duration"] = int(payload["result_duration"])
-            if "global_time" in payload:
-                game_state["config"]["global_time_remaining"] = int(payload["global_time"])
-                game_state["config"]["global_timer_running"] = False
-                game_state["config"]["global_timer_start"] = None
-
-        elif action == "set_score_size":
-            size = float(payload.get("size", 5.0))
-            game_state["config"]["score_size"] = max(1.0, min(20.0, size))
-
-        elif action == "reset":
-            game_state["disabled_events"] = []
-
-        elif action == "disable_event":
-            filename = payload.get("filename")
-            if filename and filename not in game_state["disabled_events"]:
-                game_state["disabled_events"].append(filename)
-
-        elif action == "set_disabled_events":
-            game_state["disabled_events"] = list(payload.get("events", []))
-
-        elif action == "toggle_events":
-            game_state["show_events"] = not game_state["show_events"]
-
-        elif action == "set_timer_size":
-            size = float(payload.get("size", 3.0))
-            game_state["config"]["global_timer_size"] = max(1.0, min(12.0, size))
-
-        elif action == "control_global_timer":
-            state = payload.get("state")
-            cfg = game_state["config"]
-            if state == "start" and not cfg["global_timer_running"]:
-                cfg["global_timer_running"] = True
-                cfg["global_timer_start"] = time.time()
-            elif state == "stop" and cfg["global_timer_running"]:
-                # Freeze current remaining before clearing the running state
-                cfg["global_time_remaining"] = _effective_remaining()
-                cfg["global_timer_running"] = False
-                cfg["global_timer_start"] = None
-
+        handler(payload)
         snapshot = _state_snapshot()
 
     _notify_subscribers(snapshot)

@@ -1,0 +1,27 @@
+/* ============================================================
+   SHARED DESIGN TOKENS
+   Imported by both style.css (display) and control.html.
+   Keep in sync — this is the single source of truth.
+   ============================================================ */
+:root {
+    /* Colors */
+    --color-bg:          #1a2332;
+    --color-surface:     rgba(255, 255, 255, 0.06);
+    --color-border:      rgba(255, 255, 255, 0.12);
+    --color-accent:      #e74c3c;
+    --color-accent-glow: rgba(231, 76, 60, 0.3);
+    --color-text:        #ffffff;
+    --color-text-muted:  rgba(255, 255, 255, 0.5);
+
+    /* Button colors */
+    --btn-green:  #27ae60;
+    --btn-blue:   #2980b9;
+    --btn-red:    #c0392b;
+    --btn-orange: #d35400;
+
+    /* Shape */
+    --radius-sm: 10px;
+    --radius-md: 18px;
+    --radius-lg: 28px;
+    --shadow:    0 8px 32px rgba(0, 0, 0, 0.45);
+}

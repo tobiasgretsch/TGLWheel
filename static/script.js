@@ -1,9 +1,34 @@
+(function() {
+'use strict';
+
 // --- CONSTANTS ---
 // SPIN_DURATION_MS is read directly from the CSS transition on the canvas so it can
 // never silently diverge from --spin-duration in style.css.
 const SPIN_DURATION_MS = parseFloat(getComputedStyle(document.getElementById('wheelCanvas')).transitionDuration) * 1000;
 const MIN_SPIN_ROTATIONS = 5;   // Full rotations before the random stop angle
 const RESULT_TICK_MS = 200;     // Result timer checks every 200ms to stay accurate
+
+// Wheel geometry (canvas internal resolution is 600×600)
+const WHEEL_OUTER_R = 300;
+const WHEEL_RIM_W = 22;
+const WHEEL_DISC_R = WHEEL_OUTER_R - WHEEL_RIM_W;  // 278
+const WHEEL_IMG_SIZE = 82;
+const WHEEL_IMG_DIST_RATIO = 0.65;                  // image centre at 65% of disc radius
+const WHEEL_HUB_RATIO = 0.13;                       // centre backing disc at 13% of canvas width
+const WHEEL_IMG_BORDER_W = 2;                        // white border ring width around images
+const WHEEL_RIM_DOT_R = 3;                           // dot radius in rim band
+
+// Win animation timing
+const WIN_HIDE_WHEEL_MS = 500;    // delay before hiding wheel stage after spin
+const WIN_SHOW_RESULT_MS = 2500;  // delay before showing winner text + timer stage
+
+// Floating image starting size (px) — matches indicator area
+const FLOAT_IMG_START_SIZE = 80;
+const FLOAT_IMG_OFFSET_TOP = 30;
+const FLOAT_IMG_OFFSET_LEFT = -15;
+
+// Result timer pulse threshold (seconds remaining)
+const PULSE_THRESHOLD_SEC = 5;
 
 // --- DOM ELEMENTS ---
 const canvas = document.getElementById('wheelCanvas');
@@ -74,7 +99,8 @@ fetch('/api/get_wheel_data')
         Promise.all(loadPromises).then(loaded => {
             initWheel(loaded.filter(i => i !== null));
         });
-    });
+    })
+    .catch(err => console.error('Failed to load wheel data:', err));
 
 // Global timer display tick. The source of truth is globalTimerEndMs (set from server
 // data), so this interval only drives the UI and does not accumulate drift.
@@ -113,12 +139,10 @@ function drawWheel() {
     const W = canvas.width;
     const cx = W / 2;
     const cy = W / 2;
-    const outerR = W / 2;        // 300
-    const RIM_W = 22;
-    const discR = outerR - RIM_W; // 278
-    const IMG_SIZE = 82;
-    const IMG_RADIUS = IMG_SIZE / 2;
-    const IMG_DIST = discR * 0.65; // ~181
+    const outerR = WHEEL_OUTER_R;
+    const discR = WHEEL_DISC_R;
+    const IMG_RADIUS = WHEEL_IMG_SIZE / 2;
+    const IMG_DIST = discR * WHEEL_IMG_DIST_RATIO;
 
     ctx.clearRect(0, 0, W, W);
 
@@ -161,7 +185,7 @@ function drawWheel() {
 
         // White border ring drawn outside clip
         ctx.beginPath();
-        ctx.arc(0, 0, IMG_RADIUS + 2, 0, Math.PI * 2);
+        ctx.arc(0, 0, IMG_RADIUS + WHEEL_IMG_BORDER_W, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fill();
 
@@ -171,7 +195,7 @@ function drawWheel() {
         ctx.clip();
         const iw = sector.imgObject.naturalWidth;
         const ih = sector.imgObject.naturalHeight;
-        const scale = Math.max(IMG_SIZE / iw, IMG_SIZE / ih);
+        const scale = Math.max(WHEEL_IMG_SIZE / iw, WHEEL_IMG_SIZE / ih);
         const dw = iw * scale;
         const dh = ih * scale;
         ctx.drawImage(sector.imgObject, -dw / 2, -dh / 2, dw, dh);
@@ -194,7 +218,7 @@ function drawWheel() {
     sectors.forEach(sector => {
         const mid = sector.startAngle + (sector.endAngle - sector.startAngle) / 2;
         ctx.beginPath();
-        ctx.arc(cx + dotR * Math.cos(mid), cy + dotR * Math.sin(mid), 3, 0, Math.PI * 2);
+        ctx.arc(cx + dotR * Math.cos(mid), cy + dotR * Math.sin(mid), WHEEL_RIM_DOT_R, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(255,255,255,0.28)';
         ctx.fill();
     });
@@ -211,7 +235,7 @@ function drawWheel() {
 
     // Layer 8: Centre backing disc (sits under the HTML hub element)
     ctx.beginPath();
-    ctx.arc(cx, cy, W * 0.13, 0, Math.PI * 2);
+    ctx.arc(cx, cy, W * WHEEL_HUB_RATIO, 0, Math.PI * 2);
     ctx.fillStyle = '#1a2332';
     ctx.fill();
 }
@@ -243,8 +267,8 @@ function handleStateUpdate(data) {
 
     if (data.command_id !== 0 && data.command_id !== lastCommandId) {
         lastCommandId = data.command_id;
-        if (data.command === 'spin') {
-            startSpinSequence();
+        if (data.command === 'spin' && data.winner_index != null) {
+            startSpinSequence(data.winner_index);
         } else if (data.command === 'reset') {
             resetApp();
         }
@@ -320,15 +344,15 @@ function sendCommand(action, payload = {}) {
 
 
 // --- 6. SPIN LOGIC ---
-function startSpinSequence() {
+function startSpinSequence(winningIndex) {
     if (sectors.length === 0 || isSpinning || wheelStage.classList.contains('hidden')) return;
+    if (winningIndex < 0 || winningIndex >= sectors.length) return;
     isSpinning = true;
     timerContent.classList.remove('pulse-red');
 
-    // Pre-select the winning sector so the rotation distance is always exactly
-    // MIN_SPIN_ROTATIONS * 360 + sector_offset degrees — consistent speed every time.
+    // The server pre-selected the winning sector. The rotation distance is always
+    // exactly MIN_SPIN_ROTATIONS * 360 + sector_offset degrees — consistent speed every time.
     const degreesPerSector = 360 / sectors.length;
-    const winningIndex = Math.floor(Math.random() * sectors.length);
 
     // Indicator is at the top (270°). Reverse the calculateWinner formula to find
     // the rotation that places the winning sector's midpoint under the indicator.
@@ -353,10 +377,10 @@ function startWinAnimation(winner) {
     const rect = indicator.getBoundingClientRect();
     floatingImg.src = winner.src;
     floatingImg.className = '';
-    floatingImg.style.width = '80px';
-    floatingImg.style.height = '80px';
-    floatingImg.style.top = `${rect.top + 30}px`;
-    floatingImg.style.left = `${rect.left - 15}px`; // Centre on indicator: half image width (40) minus indicator offset (25)
+    floatingImg.style.width = FLOAT_IMG_START_SIZE + 'px';
+    floatingImg.style.height = FLOAT_IMG_START_SIZE + 'px';
+    floatingImg.style.top = `${rect.top + FLOAT_IMG_OFFSET_TOP}px`;
+    floatingImg.style.left = `${rect.left + FLOAT_IMG_OFFSET_LEFT}px`; // Centre on indicator: half image width (40) minus indicator offset (25)
     floatingImg.style.transform = 'translate(0, 0)';
 
     // Force a reflow to commit the starting position before adding the animation class.
@@ -370,7 +394,7 @@ function startWinAnimation(winner) {
     winAnimTimeoutA = setTimeout(() => {
         winAnimTimeoutA = null;
         wheelStage.classList.add('hidden');
-    }, 500);
+    }, WIN_HIDE_WHEEL_MS);
 
     winAnimTimeoutB = setTimeout(() => {
         winAnimTimeoutB = null;
@@ -379,7 +403,7 @@ function startWinAnimation(winner) {
         timerStage.classList.remove('hidden');
         winnerTextDisplay.classList.add('show');
         armResultTimer();
-    }, 2500);
+    }, WIN_SHOW_RESULT_MS);
 }
 
 
@@ -407,7 +431,7 @@ function startResultTimer() {
         const remaining = Math.ceil((resultTimerEndMs - Date.now()) / 1000);
         updateResultTimerUI(remaining);
 
-        if (remaining <= 5 && remaining > 0) {
+        if (remaining <= PULSE_THRESHOLD_SEC && remaining > 0) {
             timerContent.classList.add('pulse-red');
         }
         if (remaining <= 0) {
@@ -443,12 +467,20 @@ function showEventsPopup() {
     fetch('/api/get_wheel_data')
         .then(r => r.json())
         .then(items => {
-            eventsGridEl.innerHTML = items.map(item => `
-                <div class="event-card">
-                    <img src="/static/${item.path}" alt="">
-                    <div class="event-card-text">${item.text}</div>
-                </div>
-            `).join('');
+            eventsGridEl.innerHTML = '';
+            items.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'event-card';
+                const img = document.createElement('img');
+                img.src = '/static/' + item.path;
+                img.alt = '';
+                const text = document.createElement('div');
+                text.className = 'event-card-text';
+                text.textContent = item.text;
+                card.appendChild(img);
+                card.appendChild(text);
+                eventsGridEl.appendChild(card);
+            });
             eventsPopupEl.classList.remove('hidden');
         });
 }
@@ -499,3 +531,5 @@ function resetApp() {
     void canvas.offsetWidth; // commit the style before re-enabling transition
     canvas.style.transition = '';
 }
+
+})();

@@ -7,22 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
     <style>
-        /* --- TOKENS (mirrors style.css for consistent look) --- */
-        :root {
-            --color-bg:         #1a2332;
-            --color-surface:    rgba(255, 255, 255, 0.06);
-            --color-border:     rgba(255, 255, 255, 0.12);
-            --color-accent:     #e74c3c;
-            --color-text:       #ffffff;
-            --color-text-muted: rgba(255, 255, 255, 0.5);
-            --radius-sm: 10px;
-            --radius-md: 18px;
-            --btn-green:  #27ae60;
-            --btn-blue:   #2980b9;
-            --btn-red:    #c0392b;
-            --btn-orange: #d35400;
-        }
 
         *, *::before, *::after { box-sizing: border-box; }
 
@@ -79,6 +65,15 @@
         }
 
         .row:last-child { margin-bottom: 0; }
+        .row-center { align-items: center; }
+
+        .btn-square { flex: 0; min-width: 52px; }
+
+        .size-display {
+            min-width: 60px;
+            text-align: center;
+            font-weight: 700;
+        }
 
         label {
             flex: 1;
@@ -253,11 +248,11 @@
         <div class="panel">
             <h2>Spielsteuerung</h2>
             <div class="row">
-                <button class="btn-green" onclick="sendAction('spin')">RAD DREHEN</button>
-                <button class="btn-orange" onclick="sendAction('reset')">ZURÜCKSETZEN</button>
+                <button class="btn-green" data-action="spin">RAD DREHEN</button>
+                <button class="btn-orange" data-action="reset">ZURÜCKSETZEN</button>
             </div>
             <div class="row">
-                <button class="btn-blue" id="eventsBtn" onclick="toggleEvents()">EREIGNISSE ANZEIGEN</button>
+                <button class="btn-blue" id="eventsBtn" data-action="toggle-events">EREIGNISSE ANZEIGEN</button>
             </div>
         </div>
 
@@ -268,11 +263,11 @@
             <div class="row">
                 <label>Spielzeit (Minuten):</label>
                 <input type="number" id="globalTimeInput" value="10" min="1">
-                <button class="btn-blue" onclick="setTimers()">SETZEN</button>
+                <button class="btn-blue" data-action="set-timers">SETZEN</button>
             </div>
             <div class="row">
-                <button class="btn-green" id="startBtn" onclick="toggleGlobalTimer('start')">START</button>
-                <button class="btn-red" id="pauseBtn" onclick="toggleGlobalTimer('stop')">PAUSE</button>
+                <button class="btn-green" id="startBtn" data-action="timer-start">START</button>
+                <button class="btn-red" id="pauseBtn" data-action="timer-stop">PAUSE</button>
             </div>
 
             <hr>
@@ -280,16 +275,16 @@
             <div class="row">
                 <label>Ergebnisanzeige (Sekunden):</label>
                 <input type="number" id="resultTimeInput" value="60" min="5">
-                <button class="btn-blue" onclick="setResultDuration()">ÜBERNEHMEN</button>
+                <button class="btn-blue" data-action="set-result-duration">ÜBERNEHMEN</button>
             </div>
 
             <hr>
 
-            <div class="row" style="align-items: center;">
+            <div class="row row-center">
                 <label>Spielzeit-Schriftgröße:</label>
-                <button class="btn-red"   style="flex:0; min-width:52px;" onclick="adjustTimerSize(-0.5)">−</button>
-                <span id="timerSizeDisplay" style="min-width:60px; text-align:center; font-weight:700;">3.0 rem</span>
-                <button class="btn-green" style="flex:0; min-width:52px;" onclick="adjustTimerSize(+0.5)">+</button>
+                <button class="btn-red btn-square" data-action="timer-size-down">−</button>
+                <span id="timerSizeDisplay" class="size-display">3.0 rem</span>
+                <button class="btn-green btn-square" data-action="timer-size-up">+</button>
             </div>
         </div>
 
@@ -299,24 +294,24 @@
             <div class="score-ctrl">
                 <div class="score-box">
                     <div class="score-box-label">Heim</div>
-                    <button class="btn-green btn-score-plus" onclick="updateScore('left', 1)">+1</button>
-                    <button class="btn-red   btn-score-minus" onclick="updateScore('left', -1)">−1</button>
+                    <button class="btn-green btn-score-plus" data-action="score" data-side="left" data-change="1">+1</button>
+                    <button class="btn-red   btn-score-minus" data-action="score" data-side="left" data-change="-1">−1</button>
                 </div>
                 <div class="score-box">
                     <div class="score-box-label">Gast</div>
-                    <button class="btn-green btn-score-plus" onclick="updateScore('right', 1)">+1</button>
-                    <button class="btn-red   btn-score-minus" onclick="updateScore('right', -1)">−1</button>
+                    <button class="btn-green btn-score-plus" data-action="score" data-side="right" data-change="1">+1</button>
+                    <button class="btn-red   btn-score-minus" data-action="score" data-side="right" data-change="-1">−1</button>
                 </div>
             </div>
-            <button class="btn-orange btn-full" onclick="sendAction('reset_scores')">SPIELSTAND ZURÜCKSETZEN</button>
+            <button class="btn-orange btn-full" data-action="reset_scores">SPIELSTAND ZURÜCKSETZEN</button>
 
             <hr>
 
-            <div class="row" style="align-items: center;">
+            <div class="row row-center">
                 <label>Punkte-Schriftgröße:</label>
-                <button class="btn-red"   style="flex:0; min-width:52px;" onclick="adjustScoreSize(-0.5)">−</button>
-                <span id="scoreSizeDisplay" style="min-width:60px; text-align:center; font-weight:700;">5.0 rem</span>
-                <button class="btn-green" style="flex:0; min-width:52px;" onclick="adjustScoreSize(+0.5)">+</button>
+                <button class="btn-red btn-square" data-action="score-size-down">−</button>
+                <span id="scoreSizeDisplay" class="size-display">5.0 rem</span>
+                <button class="btn-green btn-square" data-action="score-size-up">+</button>
             </div>
         </div>
         <!-- EREIGNISSE AUF DEM RAD -->
@@ -369,24 +364,22 @@
             });
         }
 
-        function loadEventChecklist() {
+        function loadEventChecklist(status) {
             fetch('/api/get_wheel_data').then(r => r.json()).then(items => {
                 allEventItems = items;
-                fetch('/api/check_status').then(r => r.json()).then(s => {
-                    disabledSet = new Set(s.disabled_events || []);
-                    const container = document.getElementById('events-checklist');
-                    container.innerHTML = items.map(item => {
-                        const filename = item.path.split('/').pop();
-                        const active = !disabledSet.has(filename);
-                        return `<label class="event-check-item${active ? '' : ' event-off'}">
-                            <input type="checkbox" ${active ? 'checked' : ''}
-                                   data-filename="${filename}"
-                                   onchange="onEventCheckChange(this)">
-                            <img src="/static/${item.path}" alt="">
-                            <span>${item.text}</span>
-                        </label>`;
-                    }).join('');
-                });
+                disabledSet = new Set((status && status.disabled_events) || []);
+                const container = document.getElementById('events-checklist');
+                container.innerHTML = items.map(item => {
+                    const filename = item.path.split('/').pop();
+                    const active = !disabledSet.has(filename);
+                    return `<label class="event-check-item${active ? '' : ' event-off'}">
+                        <input type="checkbox" ${active ? 'checked' : ''}
+                               data-filename="${filename}"
+                               onchange="onEventCheckChange(this)">
+                        <img src="/static/${item.path}" alt="">
+                        <span>${item.text}</span>
+                    </label>`;
+                }).join('');
             });
         }
 
@@ -400,15 +393,15 @@
             sendAction('set_disabled_events', { events: disabled });
         }
 
-        loadEventChecklist();
         let currentTimerSize = 3.0;
         let eventsVisible = false;
         let currentScoreSize = 5.0;
 
-        // Sync initial state from server on load.
+        // Single init fetch — shared by event checklist and config sync.
         fetch('/api/check_status')
             .then(r => r.json())
             .then(s => {
+                loadEventChecklist(s);
                 if (s.config && s.config.global_timer_size !== undefined) {
                     currentTimerSize = s.config.global_timer_size;
                     document.getElementById('timerSizeDisplay').textContent = currentTimerSize.toFixed(1) + ' rem';
@@ -421,7 +414,6 @@
                     eventsVisible = s.show_events;
                     updateEventsBtn();
                 }
-                // If timer is running or has been started (time < full configured value), show WEITER.
                 if (s.config) {
                     const configured = parseInt(document.getElementById('globalTimeInput').value, 10) * 60;
                     timerRunning = s.config.global_timer_running;
@@ -505,6 +497,51 @@
             document.getElementById('eventsBtn').textContent =
                 eventsVisible ? 'EREIGNISSE VERBERGEN' : 'EREIGNISSE ANZEIGEN';
         }
+
+        // --- DELEGATED CLICK HANDLER ---
+        document.querySelector('.container').addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+
+            const action = btn.dataset.action;
+            switch (action) {
+                case 'spin':
+                case 'reset':
+                case 'reset_scores':
+                    sendAction(action);
+                    break;
+                case 'toggle-events':
+                    toggleEvents();
+                    break;
+                case 'set-timers':
+                    setTimers();
+                    break;
+                case 'set-result-duration':
+                    setResultDuration();
+                    break;
+                case 'timer-start':
+                    toggleGlobalTimer('start');
+                    break;
+                case 'timer-stop':
+                    toggleGlobalTimer('stop');
+                    break;
+                case 'timer-size-up':
+                    adjustTimerSize(+0.5);
+                    break;
+                case 'timer-size-down':
+                    adjustTimerSize(-0.5);
+                    break;
+                case 'score':
+                    updateScore(btn.dataset.side, parseInt(btn.dataset.change, 10));
+                    break;
+                case 'score-size-up':
+                    adjustScoreSize(+0.5);
+                    break;
+                case 'score-size-down':
+                    adjustScoreSize(-0.5);
+                    break;
+            }
+        });
     </script>
 </body>
 </html>
