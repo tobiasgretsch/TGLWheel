@@ -111,18 +111,67 @@ Both the global game timer and the score digits (including Heim/Gast labels) can
 
 The `.score-board` panel uses `width: max-content` so it grows horizontally (not vertically) as font size increases.
 
+### Team Management & Tournament
+
+A second display flow for team-based play. Players self-register via QR code on their phones, the operator distributes them into random teams with a live animation on a projector, and a round-robin tournament schedule is generated.
+
+**Pages:**
+- **`/teams`** — Projector-ready display page. Shows QR code + live player list during registration, team creation animation, then team columns + schedule table.
+- **`/register`** — Mobile registration form. Players scan the QR code and enter their name.
+
+**SSE:** `/api/team_stream` pushes `team_state` snapshots (separate broadcaster from the wheel SSE).
+
+**Persistence:** `team_data.json` — written atomically (`.tmp` + `os.replace`) after every team mutation. Stores players, teams, schedule, settings, and phase. Survives server restarts.
+
+**`team_state` structure:**
+```python
+{
+    "players": [{"id": "uuid-hex", "name": "Max"}],
+    "teams": [{"name": "Team 1", "color": "#B03030", "players": ["uuid1"]}],
+    "schedule": [{"game": 1, "home": "Team 1", "away": "Team 2", "score_home": None, "score_away": None}],
+    "phase": "registration",  # "registration" | "teams_created"
+    "settings": {"num_teams": 4, "num_games": 1}
+}
+```
+
+**Team API actions** (`/api/team_command` POST, `action` field):
+| Action | Payload | Effect |
+|--------|---------|--------|
+| `create_teams` | — | Shuffle players into N teams, generate round-robin schedule |
+| `reset_teams` | — | Clear teams + schedule, keep players, phase → `registration` |
+| `reset_all` | — | Clear everything, phase → `registration` |
+| `remove_player` | `{id}` | Remove player by UUID (registration phase only) |
+| `update_settings` | `{num_teams?, num_games?}` | Update settings, persist |
+| `update_match_score` | `{game_index, score_home, score_away}` | Update match result |
+
+**Other team endpoints:**
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/register_player` | POST | Register a player `{name}` |
+| `/api/team_state` | GET | Returns current `team_state` snapshot |
+| `/api/team_stream` | GET | SSE stream for team state changes |
+| `/api/qr_code` | GET | Returns SVG QR code pointing to `/register` |
+
+**Control panel integration:** The control panel has a "TURNIER" panel with a button that opens a settings popup overlay. The popup loads/saves `num_teams` and `num_games` via `/api/team_command` with `update_settings`, and has a link to open `/teams` in a new tab.
+
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `app.py` | Flask app, API routes, in-memory game state, SSE stream |
+| `app.py` | Flask app, API routes, game state, team state, SSE broadcasters |
 | `gunicorn.conf.py` | Forces single worker — critical for Render deployment |
 | `Procfile` | Fallback start command (Render ignores this in favour of dashboard) |
 | `wheel_data.json` | Filename → display text mapping |
-| `static/script.js` | All display logic: wheel draw, SSE handling, spin, timers, scores, events popup |
-| `static/style.css` | Display screen styling (design tokens, wheel, scores, events popup) |
-| `templates/index.html` | Display screen HTML structure |
-| `templates/control.html` | Control panel — self-contained HTML+JS, no external JS file |
+| `team_data.json` | Team state persistence (players, teams, schedule, settings) |
+| `static/script.js` | Wheel display logic: draw, SSE handling, spin, timers, scores, events popup |
+| `static/style.css` | Wheel display screen styling |
+| `static/tokens.css` | Shared CSS design tokens (colors, radii, shadows) |
+| `static/teams.js` | Teams display logic: SSE, player list, team animation, schedule |
+| `static/teams.css` | Teams display page styling |
+| `templates/index.html` | Wheel display screen HTML |
+| `templates/control.html` | Control panel — self-contained HTML+JS, tournament settings popup |
+| `templates/teams.html` | Teams display page — three-phase layout (registration, animation, teams) |
+| `templates/register.html` | Mobile player registration form |
 | `static/wheel_images/` | Wheel segment images |
 | `static/tg_logo.png` | Logo displayed at wheel center hub |
 

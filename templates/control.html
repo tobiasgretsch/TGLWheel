@@ -221,6 +221,92 @@
             opacity: 0.38;
         }
 
+        /* --- POPUP OVERLAY --- */
+        .popup-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 800;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s;
+        }
+        .popup-overlay.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .popup-card {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-lg, 18px);
+            padding: 28px 24px;
+            width: 90%;
+            max-width: 420px;
+            position: relative;
+        }
+        .popup-card h2 {
+            font-size: 0.85rem;
+            margin-bottom: 20px;
+        }
+        .popup-close {
+            position: absolute;
+            top: 14px;
+            right: 14px;
+            background: none;
+            border: none;
+            color: var(--color-text-muted);
+            font-size: 1.4rem;
+            min-height: auto;
+            min-width: auto;
+            flex: 0;
+            padding: 4px 8px;
+            cursor: pointer;
+        }
+        .popup-close:hover { color: var(--color-text); }
+        .popup-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .popup-row label {
+            flex: 1;
+            min-width: 0;
+        }
+        .popup-row input[type="number"] {
+            width: 80px;
+        }
+        .popup-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .popup-actions button, .popup-actions a {
+            text-align: center;
+            text-decoration: none;
+        }
+        .btn-link {
+            display: block;
+            padding: 12px 16px;
+            font-size: 0.85rem;
+            font-family: inherit;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            border: 2px solid var(--btn-blue);
+            border-radius: var(--radius-sm);
+            color: var(--btn-blue);
+            background: transparent;
+            cursor: pointer;
+            transition: opacity 0.15s;
+            min-height: auto;
+            flex: 0;
+        }
+        .btn-link:hover { opacity: 0.8; }
+
         /* --- STATUS TOAST --- */
         #status-msg {
             position: fixed;
@@ -314,10 +400,36 @@
                 <button class="btn-green btn-square" data-action="score-size-up">+</button>
             </div>
         </div>
+        <!-- TURNIER -->
+        <div class="panel">
+            <h2>Turnier</h2>
+            <button class="btn-blue" data-action="open-tournament" style="width:100%">TURNIEREINSTELLUNGEN</button>
+        </div>
+
         <!-- EREIGNISSE AUF DEM RAD -->
         <div class="panel">
             <h2>Ereignisse auf dem Rad</h2>
             <div id="events-checklist"></div>
+        </div>
+    </div>
+
+    <!-- TOURNAMENT SETTINGS POPUP -->
+    <div id="tournament-popup" class="popup-overlay">
+        <div class="popup-card">
+            <button class="popup-close" data-action="close-tournament">&times;</button>
+            <h2>Turniereinstellungen</h2>
+            <div class="popup-row">
+                <label>Anzahl Teams:</label>
+                <input type="number" id="numTeamsInput" value="4" min="2" max="20">
+            </div>
+            <div class="popup-row">
+                <label>Spiele pro Paarung:</label>
+                <input type="number" id="numGamesInput" value="1" min="1" max="3">
+            </div>
+            <div class="popup-actions">
+                <button class="btn-green" data-action="save-tournament">SPEICHERN</button>
+                <a href="/teams" target="_blank" class="btn-link">TEAMVERWALTUNG ÖFFNEN</a>
+            </div>
         </div>
     </div>
 
@@ -498,8 +610,60 @@
                 eventsVisible ? 'EREIGNISSE VERBERGEN' : 'EREIGNISSE ANZEIGEN';
         }
 
+        // --- TOURNAMENT SETTINGS ---
+        const tournamentPopup = document.getElementById('tournament-popup');
+
+        function openTournament() {
+            fetch('/api/team_state')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('numTeamsInput').value = data.settings.num_teams;
+                    document.getElementById('numGamesInput').value = data.settings.num_games;
+                    tournamentPopup.classList.add('visible');
+                })
+                .catch(() => {
+                    tournamentPopup.classList.add('visible');
+                });
+        }
+
+        function closeTournament() {
+            tournamentPopup.classList.remove('visible');
+        }
+
+        function saveTournament() {
+            const numTeams = parseInt(document.getElementById('numTeamsInput').value, 10);
+            const numGames = parseInt(document.getElementById('numGamesInput').value, 10);
+            if (isNaN(numTeams) || numTeams < 2 || numTeams > 20) {
+                showStatus(false, 'Teams: 2–20');
+                return;
+            }
+            if (isNaN(numGames) || numGames < 1 || numGames > 3) {
+                showStatus(false, 'Spiele: 1–3');
+                return;
+            }
+            fetch('/api/team_command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'update_settings',
+                    payload: { num_teams: numTeams, num_games: numGames }
+                })
+            })
+            .then(res => {
+                if (!res.ok) throw new Error('Server error');
+                showStatus(true, 'Einstellungen gespeichert');
+                closeTournament();
+            })
+            .catch(err => showStatus(false, 'Fehler: ' + err.message));
+        }
+
+        // Close popup on overlay click (not on card click)
+        tournamentPopup.addEventListener('click', (e) => {
+            if (e.target === tournamentPopup) closeTournament();
+        });
+
         // --- DELEGATED CLICK HANDLER ---
-        document.querySelector('.container').addEventListener('click', (e) => {
+        document.body.addEventListener('click', (e) => {
             const btn = e.target.closest('[data-action]');
             if (!btn) return;
 
@@ -539,6 +703,15 @@
                     break;
                 case 'score-size-down':
                     adjustScoreSize(-0.5);
+                    break;
+                case 'open-tournament':
+                    openTournament();
+                    break;
+                case 'close-tournament':
+                    closeTournament();
+                    break;
+                case 'save-tournament':
+                    saveTournament();
                     break;
             }
         });

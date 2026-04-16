@@ -1,59 +1,76 @@
+import io
 import os
 import json
 import queue
 import random
 import time
 import threading
-from flask import Flask, render_template, jsonify, request, Response, stream_with_context
+import uuid
+
+import segno
+from flask import (Flask, render_template, jsonify, request,
+                   Response, stream_with_context)
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 # --- CONFIGURATION ---
 IMAGE_FOLDER = os.path.join('static', 'wheel_images')
 DATA_FILE = 'wheel_data.json'
+TEAM_DATA_FILE = 'team_data.json'
 ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif'}
 
-# --- GLOBAL STATE ---
+TEAM_COLORS = [
+    "#B03030", "#1C3455", "#27ae60", "#d35400",
+    "#8e44ad", "#2980b9", "#f39c12", "#1abc9c",
+]
+
+
+# ---------------------------------------------------------------------------
+# SSE Broadcaster (reusable for both game and team streams)
+# ---------------------------------------------------------------------------
+class SSEBroadcaster:
+    """Manages SSE subscribers for a named channel."""
+
+    def __init__(self):
+        self._subscribers: list[queue.Queue] = []
+        self._lock = threading.Lock()
+
+    def subscribe(self) -> queue.Queue:
+        q = queue.Queue(maxsize=10)
+        with self._lock:
+            self._subscribers.append(q)
+        return q
+
+    def unsubscribe(self, q: queue.Queue):
+        with self._lock:
+            if q in self._subscribers:
+                self._subscribers.remove(q)
+
+    def broadcast(self, data: dict):
+        message = f"data: {json.dumps(data)}\n\n"
+        with self._lock:
+            dead = []
+            for q in self._subscribers:
+                try:
+                    q.put_nowait(message)
+                except queue.Full:
+                    dead.append(q)
+            for q in dead:
+                self._subscribers.remove(q)
+
+
+_game_sse = SSEBroadcaster()
+_team_sse = SSEBroadcaster()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 _state_lock = threading.Lock()
 _command_counter = 0
-
-# --- SSE SUBSCRIBERS ---
-_subscribers: list[queue.Queue] = []
-_subscribers_lock = threading.Lock()
-
-
-def _notify_subscribers(snapshot: dict) -> None:
-    """Push a state snapshot to every connected SSE client."""
-    message = f"data: {json.dumps(snapshot)}\n\n"
-    with _subscribers_lock:
-        dead = [q for q in _subscribers if not _try_put(q, message)]
-        for q in dead:
-            _subscribers.remove(q)
-
-
-def _try_put(q: queue.Queue, message: str) -> bool:
-    try:
-        q.put_nowait(message)
-        return True
-    except queue.Full:
-        return False
-
-game_state = {
-    "command_id": 0,
-    "command": None,
-    "winner_index": None,         # sector index chosen by server on spin
-    "scores": {"left": 0, "right": 0},
-    "show_events": False,
-    "disabled_events": [],        # filenames removed from the wheel
-    "config": {
-        "result_duration": 60,
-        "global_time_remaining": 600,
-        "global_timer_running": False,
-        "global_timer_start": None,  # time.time() when the timer was last started
-        "global_timer_size": 3.0,   # rem units for the on-screen timer font size
-        "score_size": 5.0,          # rem units for the score digits
-    },
-}
+_team_lock = threading.Lock()
 
 
 def _next_command_id():
@@ -63,7 +80,6 @@ def _next_command_id():
 
 
 def _safe_int(value, default):
-    """Convert value to int, returning default on failure."""
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -71,15 +87,34 @@ def _safe_int(value, default):
 
 
 def _safe_float(value, default):
-    """Convert value to float, returning default on failure."""
     try:
         return float(value)
     except (TypeError, ValueError):
         return default
 
 
+# ---------------------------------------------------------------------------
+# Game state (in-memory, not persisted)
+# ---------------------------------------------------------------------------
+game_state = {
+    "command_id": 0,
+    "command": None,
+    "winner_index": None,
+    "scores": {"left": 0, "right": 0},
+    "show_events": False,
+    "disabled_events": [],
+    "config": {
+        "result_duration": 60,
+        "global_time_remaining": 600,
+        "global_timer_running": False,
+        "global_timer_start": None,
+        "global_timer_size": 3.0,
+        "score_size": 5.0,
+    },
+}
+
+
 def _effective_remaining():
-    """Return remaining seconds, accounting for elapsed time if the timer is running."""
     cfg = game_state["config"]
     if cfg["global_timer_running"] and cfg["global_timer_start"] is not None:
         elapsed = time.time() - cfg["global_timer_start"]
@@ -88,7 +123,6 @@ def _effective_remaining():
 
 
 def _state_snapshot():
-    """Return a serialisable copy of game_state with the effective remaining time."""
     return {
         "command_id": game_state["command_id"],
         "command": game_state["command"],
@@ -127,33 +161,139 @@ def get_images():
     ]
 
 
-# --- ROUTES ---
-@app.route("/")
-def index():
-    return render_template("index.html")
+# ---------------------------------------------------------------------------
+# Team state (persisted to team_data.json)
+# ---------------------------------------------------------------------------
+def _default_team_state():
+    return {
+        "players": [],
+        "teams": [],
+        "schedule": [],
+        "phase": "registration",
+        "settings": {
+            "num_teams": 4,
+            "num_games": 1,
+        },
+    }
 
 
-@app.route("/control")
-def control():
-    return render_template("control.html")
+team_state = _default_team_state()
 
 
-@app.route("/api/get_wheel_data")
-def get_wheel_data():
-    return jsonify(get_images())
+def _load_team_state():
+    if os.path.exists(TEAM_DATA_FILE):
+        try:
+            with open(TEAM_DATA_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            # Merge with defaults so new keys are always present
+            default = _default_team_state()
+            default.update(saved)
+            if "settings" in saved:
+                default["settings"] = {**_default_team_state()["settings"], **saved["settings"]}
+            return default
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return None
 
 
-@app.route("/api/check_status")
-def check_status():
-    with _state_lock:
-        return jsonify(_state_snapshot())
+def _save_team_state():
+    tmp = TEAM_DATA_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(team_state, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, TEAM_DATA_FILE)
 
 
+# Load persisted state on startup
+_saved = _load_team_state()
+if _saved:
+    team_state.update(_saved)
+
+
+def _team_state_snapshot():
+    return {
+        "players": list(team_state["players"]),
+        "teams": list(team_state["teams"]),
+        "schedule": list(team_state["schedule"]),
+        "phase": team_state["phase"],
+        "settings": dict(team_state["settings"]),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Round-robin schedule generation (circle method)
+# ---------------------------------------------------------------------------
+def _generate_round_robin(teams, num_games=1):
+    n = len(teams)
+    if n < 2:
+        return []
+
+    team_list = list(teams)
+    if n % 2 == 1:
+        team_list.append(None)
+        n += 1
+
+    schedule = []
+    game_num = 0
+
+    for pass_num in range(num_games):
+        rotation = list(range(1, n))
+
+        for _ in range(n - 1):
+            pairs = [(0, rotation[-1])]
+            for i in range((n - 2) // 2):
+                pairs.append((rotation[i], rotation[n - 2 - 1 - i]))
+
+            for home_idx, away_idx in pairs:
+                home = team_list[home_idx]
+                away = team_list[away_idx]
+                if home is None or away is None:
+                    continue
+                if pass_num % 2 == 1:
+                    home, away = away, home
+                game_num += 1
+                schedule.append({
+                    "game": game_num,
+                    "home": home["name"],
+                    "away": away["name"],
+                    "score_home": None,
+                    "score_away": None,
+                })
+
+            rotation = [rotation[-1]] + rotation[:-1]
+
+    return schedule
+
+
+# ---------------------------------------------------------------------------
+# SSE helper (shared by game and team streams)
+# ---------------------------------------------------------------------------
+def _make_sse_response(broadcaster: SSEBroadcaster, initial_snapshot: dict):
+    def event_stream():
+        q = broadcaster.subscribe()
+        try:
+            yield f"data: {json.dumps(initial_snapshot)}\n\n"
+            while True:
+                try:
+                    yield q.get(timeout=30)
+                except queue.Empty:
+                    yield ": heartbeat\n\n"
+        finally:
+            broadcaster.unsubscribe(q)
+
+    return Response(
+        stream_with_context(event_stream()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Game action handlers
+# ---------------------------------------------------------------------------
 def _handle_spin(payload):
     active = [img for img in get_images()
               if img["filename"] not in game_state["disabled_events"]]
     game_state["winner_index"] = random.randrange(len(active)) if active else None
-    # Stop the global timer while the wheel is spinning.
     cfg = game_state["config"]
     if cfg["global_timer_running"]:
         cfg["global_time_remaining"] = _effective_remaining()
@@ -239,6 +379,114 @@ _ACTION_HANDLERS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Team action handlers
+# ---------------------------------------------------------------------------
+def _handle_create_teams(payload):
+    players = team_state["players"]
+    n = team_state["settings"]["num_teams"]
+    if len(players) < n:
+        return
+    shuffled = list(players)
+    random.shuffle(shuffled)
+    teams = []
+    for i in range(n):
+        teams.append({
+            "name": f"Team {i + 1}",
+            "color": TEAM_COLORS[i % len(TEAM_COLORS)],
+            "players": [],
+        })
+    for idx, player in enumerate(shuffled):
+        teams[idx % n]["players"].append(player["id"])
+    team_state["teams"] = teams
+    team_state["schedule"] = _generate_round_robin(teams, team_state["settings"]["num_games"])
+    team_state["phase"] = "teams_created"
+
+
+def _handle_reset_teams(payload):
+    team_state["teams"] = []
+    team_state["schedule"] = []
+    team_state["phase"] = "registration"
+
+
+def _handle_reset_all(payload):
+    team_state["players"] = []
+    team_state["teams"] = []
+    team_state["schedule"] = []
+    team_state["phase"] = "registration"
+
+
+def _handle_remove_player(payload):
+    pid = payload.get("id")
+    if not pid or team_state["phase"] != "registration":
+        return
+    team_state["players"] = [p for p in team_state["players"] if p["id"] != pid]
+
+
+def _handle_update_settings(payload):
+    if "num_teams" in payload:
+        team_state["settings"]["num_teams"] = max(2, min(20, _safe_int(payload["num_teams"], 4)))
+    if "num_games" in payload:
+        team_state["settings"]["num_games"] = max(1, min(3, _safe_int(payload["num_games"], 1)))
+
+
+def _handle_update_match_score(payload):
+    idx = _safe_int(payload.get("game_index"), -1)
+    if 0 <= idx < len(team_state["schedule"]):
+        match = team_state["schedule"][idx]
+        if "score_home" in payload:
+            match["score_home"] = _safe_int(payload["score_home"], match["score_home"])
+        if "score_away" in payload:
+            match["score_away"] = _safe_int(payload["score_away"], match["score_away"])
+
+
+_TEAM_ACTION_HANDLERS = {
+    "create_teams":       _handle_create_teams,
+    "reset_teams":        _handle_reset_teams,
+    "reset_all":          _handle_reset_all,
+    "remove_player":      _handle_remove_player,
+    "update_settings":    _handle_update_settings,
+    "update_match_score": _handle_update_match_score,
+}
+
+
+# ===================================================================
+# ROUTES
+# ===================================================================
+
+# --- Page routes ---
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/control")
+def control():
+    return render_template("control.html")
+
+
+@app.route("/teams")
+def teams_page():
+    return render_template("teams.html")
+
+
+@app.route("/register")
+def register_page():
+    return render_template("register.html")
+
+
+# --- Game API ---
+@app.route("/api/get_wheel_data")
+def get_wheel_data():
+    return jsonify(get_images())
+
+
+@app.route("/api/check_status")
+def check_status():
+    with _state_lock:
+        return jsonify(_state_snapshot())
+
+
 @app.route("/api/send_command", methods=["POST"])
 def send_command():
     data = request.json
@@ -260,38 +508,92 @@ def send_command():
         handler(payload)
         snapshot = _state_snapshot()
 
-    _notify_subscribers(snapshot)
+    _game_sse.broadcast(snapshot)
     return jsonify({"status": "success", "state": snapshot})
 
 
 @app.route("/api/stream")
 def stream():
-    def event_stream():
-        q: queue.Queue = queue.Queue(maxsize=10)
-        with _subscribers_lock:
-            _subscribers.append(q)
-        try:
-            # Send current state immediately so the client is up to date on connect.
-            with _state_lock:
-                initial = _state_snapshot()
-            yield f"data: {json.dumps(initial)}\n\n"
-            while True:
-                try:
-                    yield q.get(timeout=30)
-                except queue.Empty:
-                    # Heartbeat keeps the connection alive through proxies and load balancers.
-                    yield ": heartbeat\n\n"
-        finally:
-            with _subscribers_lock:
-                if q in _subscribers:
-                    _subscribers.remove(q)
-
-    return Response(
-        stream_with_context(event_stream()),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    with _state_lock:
+        initial = _state_snapshot()
+    return _make_sse_response(_game_sse, initial)
 
 
+# --- Team API ---
+@app.route("/api/register_player", methods=["POST"])
+def register_player():
+    data = request.json
+    if not data:
+        return jsonify({"status": "error", "message": "Invalid JSON"}), 400
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"status": "error", "message": "Name darf nicht leer sein"}), 400
+    if len(name) > 50:
+        return jsonify({"status": "error", "message": "Name zu lang (max 50 Zeichen)"}), 400
+
+    with _team_lock:
+        # Reject duplicate names (case-insensitive)
+        existing = {p["name"].lower() for p in team_state["players"]}
+        if name.lower() in existing:
+            return jsonify({"status": "error", "message": "Name bereits registriert"}), 409
+
+        player = {"id": uuid.uuid4().hex[:12], "name": name}
+        team_state["players"].append(player)
+        _save_team_state()
+        snapshot = _team_state_snapshot()
+
+    _team_sse.broadcast(snapshot)
+    return jsonify({"status": "success", "player": player})
+
+
+@app.route("/api/team_state")
+def get_team_state():
+    with _team_lock:
+        return jsonify(_team_state_snapshot())
+
+
+@app.route("/api/team_command", methods=["POST"])
+def team_command():
+    data = request.json
+    if not data:
+        return jsonify({"status": "error", "message": "Invalid JSON"}), 400
+    action = data.get("action")
+    if not action:
+        return jsonify({"status": "error", "message": "Missing action"}), 400
+
+    handler = _TEAM_ACTION_HANDLERS.get(action)
+    if handler is None:
+        return jsonify({"status": "error", "message": f"Unknown action: {action}"}), 400
+
+    payload = data.get("payload", {})
+
+    with _team_lock:
+        handler(payload)
+        _save_team_state()
+        snapshot = _team_state_snapshot()
+
+    _team_sse.broadcast(snapshot)
+    return jsonify({"status": "success", "state": snapshot})
+
+
+@app.route("/api/team_stream")
+def team_stream():
+    with _team_lock:
+        initial = _team_state_snapshot()
+    return _make_sse_response(_team_sse, initial)
+
+
+@app.route("/api/qr_code")
+def qr_code():
+    url = request.url_root.rstrip("/") + "/register"
+    qr = segno.make(url)
+    buf = io.BytesIO()
+    qr.save(buf, kind="svg", scale=8, dark="#ffffff", light="#1a2332")
+    buf.seek(0)
+    return Response(buf.getvalue(), mimetype="image/svg+xml",
+                    headers={"Cache-Control": "no-cache"})
+
+
+# ===================================================================
 if __name__ == "__main__":
     app.run(debug=True, port=5000, threaded=True)

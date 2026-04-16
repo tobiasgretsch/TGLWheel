@@ -1,0 +1,341 @@
+/* ============================================================
+   TEAMS PAGE — Projector-ready display + management
+   ============================================================ */
+@import url('tokens.css');
+
+/* --- GLOBAL --- */
+*, *::before, *::after { box-sizing: border-box; }
+
+body, html {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: var(--color-bg);
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    color: var(--color-text);
+    overflow-x: hidden;
+}
+
+h2 {
+    margin: 0 0 16px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--color-text-muted);
+}
+
+/* --- PHASE MANAGEMENT --- */
+.phase {
+    min-height: 100vh;
+    padding: clamp(20px, 3vmin, 48px);
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+}
+
+.phase.hidden { display: none; }
+
+/* ============================================================
+   REGISTRATION PHASE
+   ============================================================ */
+.reg-layout {
+    display: flex;
+    gap: clamp(24px, 4vmin, 64px);
+    width: 100%;
+    max-width: 1200px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+
+.qr-panel {
+    flex: 0 0 auto;
+    text-align: center;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: clamp(20px, 3vmin, 40px);
+}
+
+.qr-panel h2 {
+    font-size: clamp(1rem, 2.5vmin, 1.6rem);
+    font-weight: 800;
+    color: var(--color-text);
+    letter-spacing: 0.04em;
+    margin-bottom: clamp(12px, 2vmin, 24px);
+}
+
+#qr-img {
+    width: clamp(200px, 30vmin, 360px);
+    height: clamp(200px, 30vmin, 360px);
+    border-radius: var(--radius-md);
+}
+
+.qr-url {
+    margin-top: 12px;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    word-break: break-all;
+}
+
+/* --- PLAYERS PANEL --- */
+.players-panel {
+    flex: 1;
+    min-width: 280px;
+}
+
+.players-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.players-header h2 { margin: 0; }
+
+.badge {
+    background: var(--color-accent);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    min-width: 28px;
+    text-align: center;
+}
+
+.player-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+    min-height: 48px;
+}
+
+.player-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 24px;
+    padding: 8px 14px;
+    font-size: clamp(0.85rem, 1.8vmin, 1.1rem);
+    font-weight: 600;
+    animation: chipIn 0.3s ease-out;
+}
+
+@keyframes chipIn {
+    from { opacity: 0; transform: scale(0.85); }
+    to   { opacity: 1; transform: scale(1); }
+}
+
+.player-chip .remove-btn {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+}
+.player-chip .remove-btn:hover { color: var(--color-accent); }
+
+/* --- ACTION BUTTONS --- */
+.btn-action {
+    padding: 16px 32px;
+    font-size: 1rem;
+    font-family: inherit;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: #fff;
+    transition: opacity 0.15s, transform 0.1s;
+}
+.btn-action:active { transform: scale(0.97); }
+.btn-action:hover { opacity: 0.88; }
+.btn-action:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+
+.btn-green  { background: var(--btn-green); }
+.btn-orange { background: var(--btn-orange); }
+.btn-red    { background: var(--btn-red); }
+.btn-red-outline {
+    background: transparent;
+    border: 2px solid var(--btn-red);
+    color: var(--btn-red);
+}
+
+/* ============================================================
+   ANIMATION PHASE
+   ============================================================ */
+.anim-container {
+    width: 100%;
+    max-width: 1200px;
+    position: relative;
+    min-height: 80vh;
+}
+
+.anim-player-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    padding: 24px;
+}
+
+.anim-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 10px 18px;
+    font-size: 1rem;
+    font-weight: 600;
+    transition: transform 0.4s cubic-bezier(0.25, 0.1, 0.25, 1),
+                opacity 0.4s ease;
+}
+
+.anim-team-columns {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    padding: 24px;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+}
+.anim-team-columns.visible { opacity: 1; }
+
+.anim-team-col {
+    flex: 1;
+    max-width: 240px;
+    min-height: 200px;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+}
+
+.anim-team-header {
+    padding: 12px 16px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    text-align: center;
+    letter-spacing: 0.06em;
+}
+
+.anim-team-body {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.anim-team-player {
+    background: rgba(255,255,255,0.04);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    animation: cardSettle 0.3s ease-out;
+}
+
+@keyframes cardSettle {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================================
+   TEAMS CREATED PHASE
+   ============================================================ */
+.teams-layout {
+    width: 100%;
+    max-width: 1200px;
+}
+
+.team-columns {
+    display: flex;
+    gap: clamp(12px, 2vmin, 24px);
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: clamp(24px, 4vmin, 48px);
+}
+
+.team-col {
+    flex: 1;
+    min-width: 180px;
+    max-width: 280px;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+}
+
+.team-header {
+    padding: clamp(10px, 1.5vmin, 16px);
+    font-weight: 700;
+    font-size: clamp(0.85rem, 1.8vmin, 1.2rem);
+    text-align: center;
+    letter-spacing: 0.06em;
+}
+
+.team-body {
+    padding: clamp(8px, 1.2vmin, 14px);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.team-player {
+    background: rgba(255,255,255,0.04);
+    border-radius: 6px;
+    padding: clamp(6px, 1vmin, 10px) clamp(10px, 1.5vmin, 14px);
+    font-size: clamp(0.8rem, 1.6vmin, 1.05rem);
+    font-weight: 600;
+}
+
+/* --- SCHEDULE TABLE --- */
+.schedule-section {
+    margin-bottom: clamp(24px, 4vmin, 48px);
+}
+
+.schedule-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: clamp(0.8rem, 1.6vmin, 1rem);
+}
+
+.schedule-table th,
+.schedule-table td {
+    padding: clamp(8px, 1.2vmin, 14px) clamp(12px, 2vmin, 20px);
+    text-align: center;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.schedule-table th {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--color-text-muted);
+}
+
+.schedule-table td {
+    font-weight: 600;
+}
+
+.match-vs {
+    color: var(--color-text-muted);
+    font-size: 0.75em;
+}
+
+/* --- TEAMS ACTIONS --- */
+.teams-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.teams-actions .btn-action {
+    min-width: 180px;
+}

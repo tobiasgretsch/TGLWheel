@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teamverwaltung</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='teams.css') }}">
+</head>
+<body>
+    <!-- REGISTRATION PHASE -->
+    <div id="phase-registration" class="phase">
+        <div class="reg-layout">
+            <div class="qr-panel">
+                <h2>Jetzt anmelden</h2>
+                <img id="qr-img" src="/api/qr_code" alt="QR Code">
+                <div id="qr-url" class="qr-url"></div>
+            </div>
+            <div class="players-panel">
+                <div class="players-header">
+                    <h2>Spieler</h2>
+                    <span id="player-count" class="badge">0</span>
+                </div>
+                <div id="player-list" class="player-list"></div>
+                <button id="btn-create-teams" class="btn-action btn-green" disabled>TEAMS ERSTELLEN</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ANIMATION PHASE (brief, between registration and teams_created) -->
+    <div id="phase-animation" class="phase hidden">
+        <div class="anim-container">
+            <div id="anim-player-list" class="anim-player-list"></div>
+            <div id="anim-team-columns" class="anim-team-columns"></div>
+        </div>
+    </div>
+
+    <!-- TEAMS CREATED PHASE -->
+    <div id="phase-teams" class="phase hidden">
+        <div class="teams-layout">
+            <div id="team-columns" class="team-columns"></div>
+            <div class="schedule-section">
+                <h2>Spielplan</h2>
+                <table id="schedule-table" class="schedule-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Heim</th>
+                            <th></th>
+                            <th>Gast</th>
+                        </tr>
+                    </thead>
+                    <tbody id="schedule-body"></tbody>
+                </table>
+            </div>
+            <div class="teams-actions">
+                <button id="btn-reshuffle" class="btn-action btn-orange">NEU MISCHEN</button>
+                <button id="btn-reset-teams" class="btn-action btn-red">ZURÜCKSETZEN</button>
+                <button id="btn-reset-all" class="btn-action btn-red-outline">ALLES LÖSCHEN</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='teams.js') }}"></script>
+</body>
+</html>
