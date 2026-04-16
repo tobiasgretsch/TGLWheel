@@ -292,3 +292,9 @@ h2 {
     font-size: 0.75em;
 }
 
+.match-score {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.05em;
+    color: var(--color-accent, #4dabf7);
+}
+

@@ -155,10 +155,17 @@ function renderSchedule(schedule) {
         const tdAway = document.createElement('td');
         tdAway.textContent = match.away;
 
+        const tdScore = document.createElement('td');
+        tdScore.className = 'match-score';
+        if (match.score_home != null && match.score_away != null) {
+            tdScore.textContent = match.score_home + ' : ' + match.score_away;
+        }
+
         tr.appendChild(tdNum);
         tr.appendChild(tdHome);
         tr.appendChild(tdVs);
         tr.appendChild(tdAway);
+        tr.appendChild(tdScore);
         scheduleBodyEl.appendChild(tr);
     });
 }
