@@ -153,6 +153,12 @@ def _handle_spin(payload):
     active = [img for img in get_images()
               if img["filename"] not in game_state["disabled_events"]]
     game_state["winner_index"] = random.randrange(len(active)) if active else None
+    # Stop the global timer while the wheel is spinning.
+    cfg = game_state["config"]
+    if cfg["global_timer_running"]:
+        cfg["global_time_remaining"] = _effective_remaining()
+        cfg["global_timer_running"] = False
+        cfg["global_timer_start"] = None
 
 
 def _handle_update_score(payload):
