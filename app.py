@@ -37,6 +37,12 @@ TEAM_COLORS = [
     "#8e44ad", "#2980b9", "#f39c12", "#1abc9c",
 ]
 
+# Display phase, owned by the server so a display can restore itself after a
+# reload or reconnect and the control panel knows when a spin is allowed.
+PHASE_WHEEL = "wheel"        # wheel visible, spin allowed
+PHASE_SPINNING = "spinning"  # winner chosen, display is animating the spin
+PHASE_RESULT = "result"      # result screen visible, winner disabled
+
 
 # ---------------------------------------------------------------------------
 # SSE Broadcaster (reusable for both game and team streams)
@@ -62,14 +68,24 @@ class SSEBroadcaster:
     def broadcast(self, data: dict):
         message = f"data: {json.dumps(data)}\n\n"
         with self._lock:
-            dead = []
             for q in self._subscribers:
+                self._enqueue_latest(q, message)
+
+    @staticmethod
+    def _enqueue_latest(q: queue.Queue, message: str):
+        """Every message is a full snapshot, so a client that cannot keep up only
+        needs the newest one. Drop the oldest queued message rather than the client:
+        an evicted client would keep its connection (heartbeats still flow) but never
+        receive state again until someone refreshes the page."""
+        while True:
+            try:
+                q.put_nowait(message)
+                return
+            except queue.Full:
                 try:
-                    q.put_nowait(message)
-                except queue.Full:
-                    dead.append(q)
-            for q in dead:
-                self._subscribers.remove(q)
+                    q.get_nowait()
+                except queue.Empty:
+                    pass
 
 
 _game_sse = SSEBroadcaster()
@@ -112,7 +128,9 @@ def _safe_float(value, default):
 game_state = {
     "command_id": 0,
     "command": None,
-    "winner_index": None,
+    "phase": PHASE_WHEEL,
+    "winner_index": None,     # index into the active (non-disabled) image list
+    "winner_filename": None,  # survives the winner being disabled
     "scores": {"left": 0, "right": 0},
     "show_events": False,
     "disabled_events": [],
@@ -140,7 +158,9 @@ def _state_snapshot():
     return {
         "command_id": game_state["command_id"],
         "command": game_state["command"],
+        "phase": game_state["phase"],
         "winner_index": game_state["winner_index"],
+        "winner_filename": game_state["winner_filename"],
         "scores": dict(game_state["scores"]),
         "show_events": game_state["show_events"],
         "disabled_events": list(game_state["disabled_events"]),
@@ -308,11 +328,16 @@ def _make_sse_response(broadcaster: SSEBroadcaster, initial_snapshot: dict):
 # message (str) — in which case nothing is broadcast and the caller gets a 400.
 # ---------------------------------------------------------------------------
 def _handle_spin(payload):
+    if game_state["phase"] != PHASE_WHEEL:
+        return "Rad ist nicht bereit — Ergebnis wird noch angezeigt"
     active = [img for img in get_images()
               if img["filename"] not in game_state["disabled_events"]]
     if not active:
         return "Keine aktiven Ereignisse — bitte RESET drücken"
-    game_state["winner_index"] = random.randrange(len(active))
+    winner_index = random.randrange(len(active))
+    game_state["winner_index"] = winner_index
+    game_state["winner_filename"] = active[winner_index]["filename"]
+    game_state["phase"] = PHASE_SPINNING
     cfg = game_state["config"]
     if cfg["global_timer_running"]:
         cfg["global_time_remaining"] = _effective_remaining()
@@ -348,14 +373,31 @@ def _handle_set_score_size(payload):
     game_state["config"]["score_size"] = max(1.0, min(20.0, size))
 
 
+def _clear_winner():
+    game_state["winner_index"] = None
+    game_state["winner_filename"] = None
+    game_state["phase"] = PHASE_WHEEL
+
+
 def _handle_reset(payload):
     game_state["disabled_events"] = []
+    _clear_winner()
 
 
-def _handle_disable_event(payload):
-    filename = payload.get("filename")
+def _handle_spin_finished(payload):
+    """Sent by the display when the spin animation lands. Idempotent, so a second
+    display (or a retry) cannot disable anything twice or change the phase."""
+    if game_state["phase"] != PHASE_SPINNING:
+        return None
+    filename = game_state["winner_filename"]
     if filename and filename not in game_state["disabled_events"]:
         game_state["disabled_events"].append(filename)
+    game_state["phase"] = PHASE_RESULT
+
+
+def _handle_result_finished(payload):
+    """Sent by the display when the result timer expires. Keeps the winner disabled."""
+    _clear_winner()
 
 
 def _handle_set_disabled_events(payload):
@@ -425,7 +467,8 @@ _ACTION_HANDLERS = {
     "set_timers":           _handle_set_timers,
     "set_score_size":       _handle_set_score_size,
     "reset":                _handle_reset,
-    "disable_event":        _handle_disable_event,
+    "spin_finished":        _handle_spin_finished,
+    "result_finished":      _handle_result_finished,
     "set_disabled_events":  _handle_set_disabled_events,
     "toggle_events":        _handle_toggle_events,
     "set_timer_size":       _handle_set_timer_size,

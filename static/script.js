@@ -30,6 +30,11 @@ const FLOAT_IMG_OFFSET_LEFT = -15;
 // Result timer pulse threshold (seconds remaining)
 const PULSE_THRESHOLD_SEC = 5;
 
+// Display phases — mirrored from the server's game_state.phase
+const PHASE_WHEEL = 'wheel';
+const PHASE_SPINNING = 'spinning';
+const PHASE_RESULT = 'result';
+
 // --- DOM ELEMENTS ---
 const canvas = document.getElementById('wheelCanvas');
 const ctx = canvas.getContext('2d');
@@ -55,7 +60,9 @@ let disabledEventsJson = '[]'; // used to detect changes in SSE updates
 let sectors = [];
 let currentRotation = 0;
 let isSpinning = false;
-let lastCommandId = 0;
+let localPhase = PHASE_WHEEL;   // what this screen is currently showing
+let awaitingRestore = true;     // true until the first message after each (re)connect
+let pendingState = null;        // state received before the wheel images finished loading
 let resultTimerInterval = null;
 let resultTimerEndMs = null;
 let resultTimerRemaining = 0;          // seconds frozen when paused
@@ -77,10 +84,11 @@ let appConfig = {
 const SECTOR_COLORS = ['#B03030', '#1C3455', '#FFFFFF'];
 
 // --- 1. INITIALIZATION ---
-// SSE: The server pushes state changes instantly instead of the client polling.
-// The first message sent on connect carries the full current state, which initialises
-// lastCommandId and prevents stale commands from replaying after a page refresh.
+// SSE: The server pushes a full state snapshot on connect and after every command.
+// The display is driven by the server's phase (wheel / spinning / result), so the
+// first message after a (re)connect restores whatever the screen should be showing.
 const eventSource = new EventSource('/api/stream');
+eventSource.onopen = () => { awaitingRestore = true; };
 eventSource.onmessage = (event) => {
     handleStateUpdate(JSON.parse(event.data));
 };
@@ -115,6 +123,11 @@ setInterval(() => {
 function initWheel(items) {
     allItems = items;
     rebuildWheel();
+    if (pendingState) {
+        const state = pendingState;
+        pendingState = null;
+        syncPhase(state, true);
+    }
 }
 
 function rebuildWheel() {
@@ -256,7 +269,8 @@ function handleStateUpdate(data) {
         if (newJson !== disabledEventsJson) {
             disabledEventsJson = newJson;
             disabledEvents = new Set(data.disabled_events);
-            if (allItems.length > 0) rebuildWheel();
+            // Redraw only while the wheel is showing; resetApp() rebuilds on return.
+            if (allItems.length > 0 && localPhase === PHASE_WHEEL) rebuildWheel();
         }
     }
 
@@ -274,12 +288,30 @@ function handleStateUpdate(data) {
         else hideEventsPopup();
     }
 
-    if (data.command_id !== 0 && data.command_id !== lastCommandId) {
-        lastCommandId = data.command_id;
-        if (data.command === 'spin' && data.winner_index != null) {
+    const restore = awaitingRestore;
+    awaitingRestore = false;
+    if (allItems.length === 0) {
+        // Images still loading — remember the latest state and apply it in initWheel().
+        pendingState = data;
+        return;
+    }
+    syncPhase(data, restore);
+}
+
+// Brings this screen in line with the server's phase. `restore` is true for the
+// first message after a (re)connect: only then do we jump straight to a result
+// screen, so a stale 'result' seen just after our own result_finished cannot
+// bring the result back.
+function syncPhase(data, restore) {
+    if (data.phase === PHASE_WHEEL) {
+        if (localPhase !== PHASE_WHEEL) resetApp();
+    } else if (data.phase === PHASE_SPINNING) {
+        if (localPhase === PHASE_WHEEL && data.winner_index != null) {
             startSpinSequence(data.winner_index);
-        } else if (data.command === 'reset') {
-            resetApp();
+        }
+    } else if (data.phase === PHASE_RESULT) {
+        if (restore && localPhase === PHASE_WHEEL && data.winner_filename) {
+            showResultDirect(data.winner_filename);
         }
     }
 }
@@ -357,6 +389,7 @@ function startSpinSequence(winningIndex) {
     if (sectors.length === 0 || isSpinning || wheelStage.classList.contains('hidden')) return;
     if (winningIndex < 0 || winningIndex >= sectors.length) return;
     isSpinning = true;
+    localPhase = PHASE_SPINNING;
     timerContent.classList.remove('pulse-red');
 
     // The server pre-selected the winning sector. The rotation distance is always
@@ -376,13 +409,13 @@ function startSpinSequence(winningIndex) {
     // Store the ID so resetApp() can cancel it if RESET is pressed mid-spin.
     spinTimeoutId = setTimeout(() => {
         spinTimeoutId = null;
-        const winner = sectors[winningIndex];
-        startWinAnimation(winner);
-        sendCommand('disable_event', { filename: winner.filename });
+        startWinAnimation(sectors[winningIndex]);
+        sendCommand('spin_finished');
     }, SPIN_DURATION_MS);
 }
 
 function startWinAnimation(winner) {
+    localPhase = PHASE_RESULT;
     const rect = indicator.getBoundingClientRect();
     floatingImg.src = winner.src;
     floatingImg.className = '';
@@ -413,6 +446,23 @@ function startWinAnimation(winner) {
         winnerTextDisplay.classList.add('show');
         armResultTimer();
     }, WIN_SHOW_RESULT_MS);
+}
+
+// Shows the result screen without the spin/fly-in animation. Used when the display
+// (re)connects while the server is already in the result phase, e.g. after a reload.
+function showResultDirect(filename) {
+    const winner = allItems.find(item => item.src.split('/').pop() === filename);
+    if (!winner) return;
+    localPhase = PHASE_RESULT;
+    isSpinning = false;
+    wheelStage.classList.add('hidden');
+    floatingImg.src = '/static/' + winner.src;
+    floatingImg.className = 'state-top';
+    winnerTextDisplay.textContent = winner.text || 'WINNER';
+    winnerTextDisplay.classList.add('show');
+    timerStage.classList.remove('hidden');
+    armResultTimer();
+    if (appConfig.global_timer_running) startResultTimer();
 }
 
 
@@ -448,6 +498,7 @@ function startResultTimer() {
             resultTimerInterval = null;
             resultTimerState = 'idle';
             resetApp();
+            sendCommand('result_finished');
         }
     }, RESULT_TICK_MS);
 }
@@ -513,6 +564,7 @@ function resetApp() {
     resultTimerState = 'idle';
     resultTimerRemaining = 0;
     isSpinning = false;
+    localPhase = PHASE_WHEEL;
     timerContent.classList.remove('pulse-red');
     timerStage.classList.add('hidden');
     winnerTextDisplay.classList.remove('show');

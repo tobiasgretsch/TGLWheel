@@ -42,15 +42,22 @@ The app is hosted on **Render** (onrender.com). Key deployment facts:
 
 The display screen connects to `/api/stream` (Server-Sent Events). The server pushes a full state snapshot on every command. The control panel POSTs to `/api/send_command`, which updates `game_state`, increments `command_id`, and notifies all SSE subscribers immediately.
 
-The first SSE message on connect carries the full current state, which initialises `lastCommandId` on the client and prevents stale commands from replaying after a page refresh.
+The display is **phase-driven**, not command-driven: it compares `game_state.phase` (`wheel` → `spinning` → `result` → `wheel`) with what it is currently showing and transitions accordingly. The first SSE message after a (re)connect therefore restores the correct screen — a reload during the result phase shows the result again (with the full result duration re-armed), a reload mid-spin replays the spin. The display reports back with `spin_finished` (animation landed → winner disabled, phase `result`) and `result_finished` (result timer expired → phase `wheel`). Both are idempotent so two displays cannot conflict. `spin` is refused with 400 unless the phase is `wheel`, and the control panel disables the spin button accordingly.
+
+SSE subscriber queues are **latest-wins**: every message is a full snapshot, so when a slow client's queue is full the oldest message is dropped, never the client.
 
 **`game_state` structure:**
 ```python
 {
-    "command_id": <int>,          # Increments on every new command
+    "command_id": <int>,          # Increments on every new command (seeded from the clock at startup)
     "command": <string>,          # 'spin', 'reset', 'update_score', etc.
+    "phase": "wheel",             # 'wheel' | 'spinning' | 'result' — drives the display
+    "winner_index": None,         # Index into the active (non-disabled) image list, set on spin
+    "winner_filename": None,      # Winner's filename, kept after it is disabled
     "scores": {"left": 0, "right": 0},
     "show_events": False,         # Whether the events popup is visible on display
+    "disabled_events": [],        # Filenames removed from the wheel (winners + operator toggles)
+    "active_match": None,         # {"game_index", "home", "away"} when a tournament match is active
     "config": {
         "result_duration": 60,        # Seconds the result screen stays visible
         "global_time_remaining": 600, # Game timer in seconds (decremented server-side)
@@ -65,8 +72,13 @@ The first SSE message on connect carries the full current state, which initialis
 **API actions** (`/api/send_command` POST, `action` field):
 | Action | Payload | Effect |
 |--------|---------|--------|
-| `spin` | — | Triggers spin sequence on display |
-| `reset` | — | Resets display to wheel view |
+| `spin` | — | Picks a winner, phase → `spinning` (400 unless phase is `wheel` or no events are active) |
+| `spin_finished` | — | From the display: winner disabled, phase → `result` (no-op unless `spinning`) |
+| `result_finished` | — | From the display: phase → `wheel`, winner stays disabled |
+| `reset` | — | Re-enables all events, phase → `wheel` |
+| `set_disabled_events` | `{events: [filename]}` | Replaces the disabled list (control panel checkboxes) |
+| `set_active_match` | `{game_index}` | Activates a tournament match, score labels show team names; `-1` clears |
+| `confirm_match_score` | — | Writes current scores to the active match, clears it (400 if none active) |
 | `update_score` | `{side, change}` | Adjusts left/right score |
 | `reset_scores` | — | Sets both scores to 0 |
 | `set_timers` | `{result_duration?, global_time?}` | Sets timer durations |

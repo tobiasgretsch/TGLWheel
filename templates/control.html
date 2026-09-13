@@ -365,7 +365,7 @@
         <div class="panel">
             <h2>Spielsteuerung</h2>
             <div class="row">
-                <button class="btn-green" data-action="spin">RAD DREHEN</button>
+                <button class="btn-green" id="spinBtn" data-action="spin">RAD DREHEN</button>
                 <button class="btn-orange" data-action="reset">ZURÜCKSETZEN</button>
             </div>
             <div class="row">
@@ -539,7 +539,16 @@
             updateTimerBtns();
 
             renderActiveMatch(data.active_match);
+            renderSpinBtn(data.phase);
             gameStateReceived = true;
+        }
+
+        const SPIN_LABELS = { wheel: 'RAD DREHEN', spinning: 'RAD DREHT …', result: 'ERGEBNIS LÄUFT' };
+
+        function renderSpinBtn(phase) {
+            const btn = document.getElementById('spinBtn');
+            btn.textContent = SPIN_LABELS[phase] || SPIN_LABELS.wheel;
+            btn.disabled = phase !== 'wheel';
         }
 
         function updateTimerBtns() {
