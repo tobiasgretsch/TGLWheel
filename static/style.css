@@ -190,6 +190,7 @@ canvas {
 #timer-display {
     font-size: var(--fs-timer-result);
     font-weight: 800;
+    font-variant-numeric: tabular-nums;
     font-family: 'Inter', 'Courier New', monospace;
     color: var(--color-accent);
     letter-spacing: 0.05em;
@@ -240,6 +241,7 @@ canvas {
     right: var(--space-lg);
     font-size: var(--fs-timer-global);
     font-weight: 700;
+    font-variant-numeric: tabular-nums;
     font-family: 'Inter', 'Courier New', monospace;
     color: var(--color-text);
     background: var(--color-surface);
@@ -288,6 +290,7 @@ canvas {
 .score-val {
     font-size: var(--fs-score);
     font-weight: 800;
+    font-variant-numeric: tabular-nums;
     color: var(--color-text);
     line-height: 1;
     white-space: nowrap;

@@ -8,8 +8,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='teams.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css', v=static_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='teams.css', v=static_version) }}">
 </head>
 <body>
     <!-- REGISTRATION PHASE -->
@@ -60,6 +60,6 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='teams.js') }}"></script>
+    <script src="{{ url_for('static', filename='teams.js', v=static_version) }}"></script>
 </body>
 </html>

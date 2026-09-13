@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css', v=static_version) }}">
     <style>
 
         *, *::before, *::after { box-sizing: border-box; }
@@ -497,28 +497,50 @@
 
     <script>
         let statusTimeout = null;
-        let allEventItems = [];   // full list from API
         let disabledSet = new Set();
         let timerEverStarted = false;
         let timerRunning = false;
+        let eventsVisible = false;
+        let currentTimerSize = 3.0;
+        let currentScoreSize = 5.0;
+        let gameStateReceived = false;
 
-        // --- SSE: keep checkboxes and timer buttons in sync ---
+        // --- SSE: the server pushes a full game snapshot on connect and after every command,
+        // so every control shown here is derived from server state, never guessed locally. ---
         const ctrlStream = new EventSource('/api/stream');
-        ctrlStream.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.disabled_events !== undefined) {
-                disabledSet = new Set(data.disabled_events);
+        ctrlStream.onmessage = (event) => applyGameState(JSON.parse(event.data));
+
+        function applyGameState(data) {
+            disabledSet = new Set(data.disabled_events || []);
+            if (gameStateReceived) {
                 syncCheckboxes();
+            } else {
+                loadEventChecklist();
             }
+
+            eventsVisible = !!data.show_events;
+            updateEventsBtn();
+
             if (data.config) {
+                currentTimerSize = data.config.global_timer_size;
+                currentScoreSize = data.config.score_size;
+                renderSizeDisplays();
                 timerRunning = data.config.global_timer_running;
-                updateTimerBtns();
+                if (!gameStateReceived) {
+                    // On first contact, infer whether the clock has ever run so the
+                    // button reads WEITER instead of START after a panel reload.
+                    const configured = parseInt(document.getElementById('globalTimeInput').value, 10) * 60;
+                    if (timerRunning || data.config.global_time_remaining < configured - 1) {
+                        timerEverStarted = true;
+                    }
+                }
             }
-            if (data.command === 'reset') {
-                timerEverStarted = false;
-                updateTimerBtns();
-            }
-        };
+            if (data.command === 'reset') timerEverStarted = false;
+            updateTimerBtns();
+
+            renderActiveMatch(data.active_match);
+            gameStateReceived = true;
+        }
 
         function updateTimerBtns() {
             const startBtn = document.getElementById('startBtn');
@@ -526,6 +548,11 @@
             startBtn.textContent = timerEverStarted ? 'WEITER' : 'START';
             startBtn.disabled = timerRunning;
             pauseBtn.disabled = !timerRunning;
+        }
+
+        function renderSizeDisplays() {
+            document.getElementById('timerSizeDisplay').textContent = currentTimerSize.toFixed(1) + ' rem';
+            document.getElementById('scoreSizeDisplay').textContent = currentScoreSize.toFixed(1) + ' rem';
         }
 
         function syncCheckboxes() {
@@ -536,10 +563,8 @@
             });
         }
 
-        function loadEventChecklist(status) {
+        function loadEventChecklist() {
             fetch('/api/get_wheel_data').then(r => r.json()).then(items => {
-                allEventItems = items;
-                disabledSet = new Set((status && status.disabled_events) || []);
                 const container = document.getElementById('events-checklist');
                 container.innerHTML = items.map(item => {
                     const filename = item.path.split('/').pop();
@@ -565,37 +590,6 @@
             sendAction('set_disabled_events', { events: disabled });
         }
 
-        let currentTimerSize = 3.0;
-        let eventsVisible = false;
-        let currentScoreSize = 5.0;
-
-        // Single init fetch — shared by event checklist and config sync.
-        fetch('/api/check_status')
-            .then(r => r.json())
-            .then(s => {
-                loadEventChecklist(s);
-                if (s.config && s.config.global_timer_size !== undefined) {
-                    currentTimerSize = s.config.global_timer_size;
-                    document.getElementById('timerSizeDisplay').textContent = currentTimerSize.toFixed(1) + ' rem';
-                }
-                if (s.config && s.config.score_size !== undefined) {
-                    currentScoreSize = s.config.score_size;
-                    document.getElementById('scoreSizeDisplay').textContent = currentScoreSize.toFixed(1) + ' rem';
-                }
-                if (s.show_events !== undefined) {
-                    eventsVisible = s.show_events;
-                    updateEventsBtn();
-                }
-                if (s.config) {
-                    const configured = parseInt(document.getElementById('globalTimeInput').value, 10) * 60;
-                    timerRunning = s.config.global_timer_running;
-                    if (timerRunning || s.config.global_time_remaining < configured - 1) {
-                        timerEverStarted = true;
-                    }
-                    updateTimerBtns();
-                }
-            });
-
         function showStatus(ok, text) {
             const el = document.getElementById('status-msg');
             el.textContent = text;
@@ -604,17 +598,26 @@
             statusTimeout = setTimeout(() => { el.className = ''; }, 2000);
         }
 
+        // Reads the server's error message from a failed response, falling back to the status code.
+        function throwServerError(res) {
+            return res.json()
+                .catch(() => ({}))
+                .then(d => { throw new Error(d.message || `Server error ${res.status}`); });
+        }
+
+        // Resolves with the new game state on success, or null on failure (already reported).
         function sendAction(action, payload = {}) {
-            fetch('/api/send_command', {
+            return fetch('/api/send_command', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action, payload })
             })
             .then(res => {
-                if (!res.ok) throw new Error(`Server error ${res.status}`);
+                if (!res.ok) return throwServerError(res);
                 showStatus(true, action + ' gesendet');
+                return res.json().then(d => d.state);
             })
-            .catch(err => showStatus(false, 'Fehler: ' + err.message));
+            .catch(err => { showStatus(false, err.message); return null; });
         }
 
         function updateScore(side, change) {
@@ -625,8 +628,6 @@
             const globalMin = parseInt(document.getElementById('globalTimeInput').value, 10);
             if (isNaN(globalMin) || globalMin < 1) { showStatus(false, 'Ungültiger Wert'); return; }
             timerEverStarted = false;
-            timerRunning = false;
-            updateTimerBtns();
             sendAction('set_timers', { global_time: globalMin * 60 });
         }
 
@@ -637,31 +638,21 @@
         }
 
         function toggleGlobalTimer(state) {
-            if (state === 'start') {
-                timerEverStarted = true;
-                timerRunning = true;
-            } else {
-                timerRunning = false;
-            }
-            updateTimerBtns();
+            if (state === 'start') timerEverStarted = true;
             sendAction('control_global_timer', { state });
         }
 
         function adjustTimerSize(delta) {
-            currentTimerSize = Math.max(1.0, Math.min(12.0, currentTimerSize + delta));
-            document.getElementById('timerSizeDisplay').textContent = currentTimerSize.toFixed(1) + ' rem';
-            sendAction('set_timer_size', { size: currentTimerSize });
+            const size = Math.max(1.0, Math.min(12.0, currentTimerSize + delta));
+            sendAction('set_timer_size', { size });
         }
 
         function adjustScoreSize(delta) {
-            currentScoreSize = Math.max(1.0, Math.min(20.0, currentScoreSize + delta));
-            document.getElementById('scoreSizeDisplay').textContent = currentScoreSize.toFixed(1) + ' rem';
-            sendAction('set_score_size', { size: currentScoreSize });
+            const size = Math.max(1.0, Math.min(20.0, currentScoreSize + delta));
+            sendAction('set_score_size', { size });
         }
 
         function toggleEvents() {
-            eventsVisible = !eventsVisible;
-            updateEventsBtn();
             sendAction('toggle_events');
         }
 
@@ -670,84 +661,98 @@
                 eventsVisible ? 'EREIGNISSE VERBERGEN' : 'EREIGNISSE ANZEIGEN';
         }
 
-        // --- MATCH SELECTOR ---
+        // --- TEAM STATE (live via SSE) ---
         const matchPanel = document.getElementById('match-panel');
         const matchSelect = document.getElementById('matchSelect');
         const matchInfo = document.getElementById('matchInfo');
+        let teamState = null;
         let tournamentSchedule = [];
 
-        let teamPlayers = [];
+        const teamStream = new EventSource('/api/team_stream');
+        teamStream.onmessage = (event) => applyTeamState(JSON.parse(event.data));
 
-        function loadTournamentSchedule() {
-            fetch('/api/team_state')
-                .then(r => r.json())
-                .then(data => {
-                    tournamentSchedule = data.schedule || [];
-                    teamPlayers = data.players || [];
-                    populateRemovePlayerSelect(teamPlayers);
-                    if (data.phase === 'teams_created' && tournamentSchedule.length > 0) {
-                        matchPanel.style.display = '';
-                        populateMatchSelect(tournamentSchedule);
-                    } else {
-                        matchPanel.style.display = 'none';
-                    }
-                })
-                .catch(() => { matchPanel.style.display = 'none'; });
+        function applyTeamState(data) {
+            teamState = data;
+            tournamentSchedule = data.schedule || [];
+            populateRemovePlayerSelect(data.players || []);
+            if (data.phase === 'teams_created' && tournamentSchedule.length > 0) {
+                matchPanel.style.display = '';
+                populateMatchSelect(tournamentSchedule);
+            } else {
+                matchPanel.style.display = 'none';
+            }
+        }
+
+        // Rebuilds a <select> while keeping the operator's current choice if it still exists.
+        function repopulateSelect(sel, placeholderValue, placeholderText, buildOptions) {
+            const previous = sel.value;
+            sel.innerHTML = '';
+            const placeholder = document.createElement('option');
+            placeholder.value = placeholderValue;
+            placeholder.textContent = placeholderText;
+            sel.appendChild(placeholder);
+            buildOptions(sel);
+            sel.value = previous;
+            if (sel.value !== previous) sel.value = placeholderValue;
         }
 
         function populateRemovePlayerSelect(players) {
-            const sel = document.getElementById('removePlayerSelect');
-            sel.innerHTML = '<option value="">— Spieler entfernen —</option>';
-            players.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = p.id;
-                opt.textContent = p.name;
-                sel.appendChild(opt);
+            repopulateSelect(document.getElementById('removePlayerSelect'), '', '— Spieler entfernen —', sel => {
+                players.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.position === 'goalkeeper' ? `${p.name} (TW)` : p.name;
+                    sel.appendChild(opt);
+                });
             });
         }
 
         function populateMatchSelect(schedule) {
-            matchSelect.innerHTML = '<option value="-1">— Spiel wählen —</option>';
-            schedule.forEach((m, i) => {
-                const played = m.score_home !== null;
-                const label = `Spiel ${m.game}: ${m.home} vs ${m.away}` +
-                    (played ? ` (${m.score_home}:${m.score_away})` : '');
-                const opt = document.createElement('option');
-                opt.value = i;
-                opt.textContent = label;
-                if (played) opt.style.opacity = '0.5';
-                matchSelect.appendChild(opt);
+            repopulateSelect(matchSelect, '-1', '— Spiel wählen —', sel => {
+                schedule.forEach((m, i) => {
+                    const played = m.score_home !== null;
+                    const label = `Spiel ${m.game}: ${m.home} vs ${m.away}` +
+                        (played ? ` (${m.score_home}:${m.score_away})` : '');
+                    const opt = document.createElement('option');
+                    opt.value = i;
+                    opt.textContent = label;
+                    if (played) opt.style.opacity = '0.5';
+                    sel.appendChild(opt);
+                });
             });
+        }
+
+        function renderActiveMatch(active) {
+            if (active) {
+                matchInfo.textContent = `Aktiv: ${active.home} vs ${active.away}`;
+                matchInfo.className = 'match-info active';
+                matchSelect.value = String(active.game_index);
+            } else if (matchInfo.classList.contains('active')) {
+                matchInfo.textContent = 'Kein Spiel ausgewählt';
+                matchInfo.className = 'match-info';
+            }
         }
 
         matchSelect.addEventListener('change', () => {
             const idx = parseInt(matchSelect.value, 10);
-            if (idx >= 0 && idx < tournamentSchedule.length) {
-                const m = tournamentSchedule[idx];
-                matchInfo.textContent = `${m.home} vs ${m.away}`;
-                matchInfo.className = 'match-info';
-            } else {
-                matchInfo.textContent = 'Kein Spiel ausgewählt';
-                matchInfo.className = 'match-info';
-            }
+            const m = tournamentSchedule[idx];
+            matchInfo.textContent = m ? `${m.home} vs ${m.away}` : 'Kein Spiel ausgewählt';
+            matchInfo.className = 'match-info';
         });
 
         function activateMatch() {
             const idx = parseInt(matchSelect.value, 10);
             if (idx < 0) { showStatus(false, 'Bitte Spiel wählen'); return; }
             sendAction('set_active_match', { game_index: idx });
-            const m = tournamentSchedule[idx];
-            matchInfo.textContent = `Aktiv: ${m.home} vs ${m.away}`;
-            matchInfo.className = 'match-info active';
         }
 
         function confirmMatchScore() {
-            sendAction('confirm_match_score');
-            matchInfo.textContent = 'Ergebnis gespeichert!';
-            matchInfo.className = 'match-info';
-            matchSelect.value = '-1';
-            // Refresh the schedule to show updated scores
-            setTimeout(loadTournamentSchedule, 500);
+            sendAction('confirm_match_score').then(state => {
+                if (!state) return;
+                matchInfo.textContent = 'Ergebnis gespeichert!';
+                matchInfo.className = 'match-info';
+                matchSelect.value = '-1';
+            });
         }
 
         function sendTeamCommand(action, payload = {}) {
@@ -757,9 +762,8 @@
                 body: JSON.stringify({ action, payload })
             })
             .then(res => {
-                if (!res.ok) return res.json().then(d => { throw new Error(d.message || 'Fehler'); });
+                if (!res.ok) return throwServerError(res);
                 showStatus(true, action + ' ausgeführt');
-                setTimeout(loadTournamentSchedule, 300);
             })
             .catch(err => showStatus(false, err.message));
         }
@@ -771,23 +775,15 @@
             sendTeamCommand('remove_player', { id });
         }
 
-        // Load schedule on page load
-        loadTournamentSchedule();
-
         // --- TOURNAMENT SETTINGS ---
         const tournamentPopup = document.getElementById('tournament-popup');
 
         function openTournament() {
-            fetch('/api/team_state')
-                .then(r => r.json())
-                .then(data => {
-                    document.getElementById('numTeamsInput').value = data.settings.num_teams;
-                    document.getElementById('numGamesInput').value = data.settings.num_games;
-                    tournamentPopup.classList.add('visible');
-                })
-                .catch(() => {
-                    tournamentPopup.classList.add('visible');
-                });
+            if (teamState && teamState.settings) {
+                document.getElementById('numTeamsInput').value = teamState.settings.num_teams;
+                document.getElementById('numGamesInput').value = teamState.settings.num_games;
+            }
+            tournamentPopup.classList.add('visible');
         }
 
         function closeTournament() {
@@ -805,21 +801,8 @@
                 showStatus(false, 'Spiele: 1–3');
                 return;
             }
-            fetch('/api/team_command', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'update_settings',
-                    payload: { num_teams: numTeams, num_games: numGames }
-                })
-            })
-            .then(res => {
-                if (!res.ok) throw new Error('Server error');
-                showStatus(true, 'Einstellungen gespeichert');
-                closeTournament();
-                setTimeout(loadTournamentSchedule, 500);
-            })
-            .catch(err => showStatus(false, 'Fehler: ' + err.message));
+            sendTeamCommand('update_settings', { num_teams: numTeams, num_games: numGames });
+            closeTournament();
         }
 
         // Close popup on overlay click (not on card click)

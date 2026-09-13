@@ -26,9 +26,10 @@ No tests exist in this project.
 The app is hosted on **Render** (onrender.com). Key deployment facts:
 
 - Render runs `gunicorn app:app` from its dashboard start command — the `Procfile` is ignored
-- `gunicorn.conf.py` in the project root is auto-loaded by gunicorn and enforces `workers=1, threads=4, worker_class=gthread`
+- `gunicorn.conf.py` in the project root is auto-loaded by gunicorn and enforces `workers=1, worker_class=gevent` (gevent so hundreds of idle SSE connections do not exhaust a thread pool)
 - **CRITICAL**: Must run with a single worker process. `game_state` and the SSE `_subscribers` list are in-memory. Multiple workers each get a private copy, so commands POSTed to one worker are never seen by the SSE stream on another worker. This was the root cause of broken two-screen communication on Render.
 - State is **in-memory only** — resets on every deploy/restart.
+- Static files are cached for a day (`SEND_FILE_MAX_AGE_DEFAULT`). CSS/JS links carry `?v=<startup time>` via the `static_version` template variable so a deploy busts the cache. Wheel images have no version — after replacing an image with the same filename, hard-refresh the display.
 
 ## Architecture
 
@@ -159,7 +160,7 @@ A second display flow for team-based play. Players self-register via QR code on 
 | File | Purpose |
 |------|---------|
 | `app.py` | Flask app, API routes, game state, team state, SSE broadcasters |
-| `gunicorn.conf.py` | Forces single worker — critical for Render deployment |
+| `gunicorn.conf.py` | Forces single gevent worker — critical for Render deployment |
 | `Procfile` | Fallback start command (Render ignores this in favour of dashboard) |
 | `wheel_data.json` | Filename → display text mapping |
 | `team_data.json` | Team state persistence (players, teams, schedule, settings) |

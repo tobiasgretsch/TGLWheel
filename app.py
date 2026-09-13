@@ -15,6 +15,17 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
+# Static files (wheel images, logo) are cached for a day. CSS/JS URLs carry a
+# ?v=<startup time> query so a deploy always busts the cache for code.
+STATIC_MAX_AGE_SECONDS = 86400
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = STATIC_MAX_AGE_SECONDS
+STATIC_VERSION = str(int(time.time()))
+
+
+@app.context_processor
+def _inject_static_version():
+    return {"static_version": STATIC_VERSION}
+
 # --- CONFIGURATION ---
 IMAGE_FOLDER = os.path.join('static', 'wheel_images')
 DATA_FILE = 'wheel_data.json'
@@ -69,7 +80,9 @@ _team_sse = SSEBroadcaster()
 # Helpers
 # ---------------------------------------------------------------------------
 _state_lock = threading.Lock()
-_command_counter = 0
+# Seeded from the clock so ids never repeat across restarts — a display that
+# remembers an id from the previous process must not ignore a fresh command.
+_command_counter = int(time.time())
 _team_lock = threading.Lock()
 
 
@@ -291,11 +304,15 @@ def _make_sse_response(broadcaster: SSEBroadcaster, initial_snapshot: dict):
 
 # ---------------------------------------------------------------------------
 # Game action handlers
+# A handler mutates game_state and returns None on success, or an error
+# message (str) — in which case nothing is broadcast and the caller gets a 400.
 # ---------------------------------------------------------------------------
 def _handle_spin(payload):
     active = [img for img in get_images()
               if img["filename"] not in game_state["disabled_events"]]
-    game_state["winner_index"] = random.randrange(len(active)) if active else None
+    if not active:
+        return "Keine aktiven Ereignisse — bitte RESET drücken"
+    game_state["winner_index"] = random.randrange(len(active))
     cfg = game_state["config"]
     if cfg["global_timer_running"]:
         cfg["global_time_remaining"] = _effective_remaining()
@@ -386,7 +403,7 @@ def _handle_set_active_match(payload):
 def _handle_confirm_match_score(payload):
     active = game_state["active_match"]
     if not active:
-        return
+        return "Kein aktives Spiel"
     idx = active["game_index"]
     score_home = game_state["scores"]["left"]
     score_away = game_state["scores"]["right"]
@@ -553,9 +570,11 @@ def send_command():
     payload = data.get("payload", {})
 
     with _state_lock:
+        error = handler(payload)
+        if error:
+            return jsonify({"status": "error", "message": error}), 400
         game_state["command_id"] = _next_command_id()
         game_state["command"] = action
-        handler(payload)
         snapshot = _state_snapshot()
 
     _game_sse.broadcast(snapshot)
