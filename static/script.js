@@ -7,6 +7,8 @@
 const SPIN_DURATION_MS = parseFloat(getComputedStyle(document.getElementById('wheelCanvas')).transitionDuration) * 1000;
 const MIN_SPIN_ROTATIONS = 5;   // Full rotations before the random stop angle
 const RESULT_TICK_MS = 200;     // Result timer checks every 200ms to stay accurate
+const COMMAND_RETRIES = 3;      // attempts for display→server callbacks (spin_finished etc.)
+const COMMAND_RETRY_DELAY_MS = 1000;
 
 // Wheel geometry (canvas internal resolution is 600×600)
 const WHEEL_OUTER_R = 300;
@@ -61,6 +63,7 @@ let sectors = [];
 let currentRotation = 0;
 let isSpinning = false;
 let localPhase = PHASE_WHEEL;   // what this screen is currently showing
+let localWinnerFilename = null; // winner this screen is spinning to / showing
 let awaitingRestore = true;     // true until the first message after each (re)connect
 let pendingState = null;        // state received before the wheel images finished loading
 let resultTimerInterval = null;
@@ -130,17 +133,18 @@ function initWheel(items) {
     }
 }
 
+function filenameOf(item) {
+    return item.src.split('/').pop();
+}
+
 function rebuildWheel() {
-    const active = allItems.filter(item => {
-        const filename = item.src.split('/').pop();
-        return !disabledEvents.has(filename);
-    });
+    const active = allItems.filter(item => !disabledEvents.has(filenameOf(item)));
     if (active.length === 0) return;
     const arcSize = (2 * Math.PI) / active.length;
     sectors = active.map((item, i) => ({
         imgObject: item.imgObject,
         src: '/static/' + item.src,
-        filename: item.src.split('/').pop(),
+        filename: filenameOf(item),
         text: item.text,
         startAngle: i * arcSize,
         endAngle: (i + 1) * arcSize,
@@ -300,18 +304,31 @@ function handleStateUpdate(data) {
 
 // Brings this screen in line with the server's phase. `restore` is true for the
 // first message after a (re)connect: only then do we jump straight to a result
-// screen, so a stale 'result' seen just after our own result_finished cannot
-// bring the result back.
+// screen. Otherwise a server phase that lags behind ours means our callback was
+// lost, so it is re-sent (both callbacks are idempotent on the server).
 function syncPhase(data, restore) {
     if (data.phase === PHASE_WHEEL) {
         if (localPhase !== PHASE_WHEEL) resetApp();
-    } else if (data.phase === PHASE_SPINNING) {
+        return;
+    }
+    if (data.phase === PHASE_SPINNING) {
+        if (localPhase === PHASE_RESULT) {
+            if (data.winner_filename === localWinnerFilename) {
+                sendCommand('spin_finished');   // server never got our ack
+                return;
+            }
+            resetApp();                         // a new spin started while we showed a stale result
+        }
         if (localPhase === PHASE_WHEEL && data.winner_index != null) {
             startSpinSequence(data.winner_index);
         }
-    } else if (data.phase === PHASE_RESULT) {
-        if (restore && localPhase === PHASE_WHEEL && data.winner_filename) {
+        return;
+    }
+    if (data.phase === PHASE_RESULT && localPhase === PHASE_WHEEL) {
+        if (restore && data.winner_filename) {
             showResultDirect(data.winner_filename);
+        } else if (!restore) {
+            sendCommand('result_finished');     // server never got our ack
         }
     }
 }
@@ -375,11 +392,22 @@ function updateGlobalTimerUI(totalSec) {
 
 
 // --- 5. COMMAND HELPER ---
-function sendCommand(action, payload = {}) {
+// Display→server callbacks keep the server's phase in step with this screen, so a
+// lost request would wedge the wheel. Retry on network errors and 5xx; a 4xx is a
+// deliberate refusal and is not retried.
+function sendCommand(action, payload = {}, attempt = 1) {
     fetch('/api/send_command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, payload })
+    })
+    .then(res => { if (res.status >= 500) throw new Error(`Server error ${res.status}`); })
+    .catch(err => {
+        if (attempt >= COMMAND_RETRIES) {
+            console.error(`${action} failed after ${attempt} attempts:`, err);
+            return;
+        }
+        setTimeout(() => sendCommand(action, payload, attempt + 1), COMMAND_RETRY_DELAY_MS);
     });
 }
 
@@ -390,6 +418,7 @@ function startSpinSequence(winningIndex) {
     if (winningIndex < 0 || winningIndex >= sectors.length) return;
     isSpinning = true;
     localPhase = PHASE_SPINNING;
+    localWinnerFilename = sectors[winningIndex].filename;
     timerContent.classList.remove('pulse-red');
 
     // The server pre-selected the winning sector. The rotation distance is always
@@ -451,9 +480,10 @@ function startWinAnimation(winner) {
 // Shows the result screen without the spin/fly-in animation. Used when the display
 // (re)connects while the server is already in the result phase, e.g. after a reload.
 function showResultDirect(filename) {
-    const winner = allItems.find(item => item.src.split('/').pop() === filename);
+    const winner = allItems.find(item => filenameOf(item) === filename);
     if (!winner) return;
     localPhase = PHASE_RESULT;
+    localWinnerFilename = filename;
     isSpinning = false;
     wheelStage.classList.add('hidden');
     floatingImg.src = '/static/' + winner.src;
@@ -565,6 +595,7 @@ function resetApp() {
     resultTimerRemaining = 0;
     isSpinning = false;
     localPhase = PHASE_WHEEL;
+    localWinnerFilename = null;
     timerContent.classList.remove('pulse-red');
     timerStage.classList.add('hidden');
     winnerTextDisplay.classList.remove('show');

@@ -43,6 +43,11 @@ PHASE_WHEEL = "wheel"        # wheel visible, spin allowed
 PHASE_SPINNING = "spinning"  # winner chosen, display is animating the spin
 PHASE_RESULT = "result"      # result screen visible, winner disabled
 
+# A real spin animation lands within ~8 s. If no display acknowledges the spin
+# for this long (no display open, callback lost), the phase is stale and a new
+# spin is allowed rather than forcing the operator to reset the whole wheel.
+SPIN_STALE_SECONDS = 20
+
 
 # ---------------------------------------------------------------------------
 # SSE Broadcaster (reusable for both game and team streams)
@@ -131,6 +136,7 @@ game_state = {
     "phase": PHASE_WHEEL,
     "winner_index": None,     # index into the active (non-disabled) image list
     "winner_filename": None,  # survives the winner being disabled
+    "spin_started_at": None,  # time.time() of the last accepted spin
     "scores": {"left": 0, "right": 0},
     "show_events": False,
     "disabled_events": [],
@@ -327,9 +333,17 @@ def _make_sse_response(broadcaster: SSEBroadcaster, initial_snapshot: dict):
 # A handler mutates game_state and returns None on success, or an error
 # message (str) — in which case nothing is broadcast and the caller gets a 400.
 # ---------------------------------------------------------------------------
+def _spin_is_stale():
+    started = game_state["spin_started_at"]
+    return started is not None and time.time() - started > SPIN_STALE_SECONDS
+
+
 def _handle_spin(payload):
-    if game_state["phase"] != PHASE_WHEEL:
+    phase = game_state["phase"]
+    if phase == PHASE_RESULT:
         return "Rad ist nicht bereit — Ergebnis wird noch angezeigt"
+    if phase == PHASE_SPINNING and not _spin_is_stale():
+        return "Rad dreht sich noch"
     active = [img for img in get_images()
               if img["filename"] not in game_state["disabled_events"]]
     if not active:
@@ -337,6 +351,7 @@ def _handle_spin(payload):
     winner_index = random.randrange(len(active))
     game_state["winner_index"] = winner_index
     game_state["winner_filename"] = active[winner_index]["filename"]
+    game_state["spin_started_at"] = time.time()
     game_state["phase"] = PHASE_SPINNING
     cfg = game_state["config"]
     if cfg["global_timer_running"]:
@@ -373,15 +388,16 @@ def _handle_set_score_size(payload):
     game_state["config"]["score_size"] = max(1.0, min(20.0, size))
 
 
-def _clear_winner():
+def _enter_wheel_phase():
     game_state["winner_index"] = None
     game_state["winner_filename"] = None
+    game_state["spin_started_at"] = None
     game_state["phase"] = PHASE_WHEEL
 
 
 def _handle_reset(payload):
     game_state["disabled_events"] = []
-    _clear_winner()
+    _enter_wheel_phase()
 
 
 def _handle_spin_finished(payload):
@@ -397,7 +413,7 @@ def _handle_spin_finished(payload):
 
 def _handle_result_finished(payload):
     """Sent by the display when the result timer expires. Keeps the winner disabled."""
-    _clear_winner()
+    _enter_wheel_phase()
 
 
 def _handle_set_disabled_events(payload):

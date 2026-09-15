@@ -676,6 +676,7 @@
         const matchInfo = document.getElementById('matchInfo');
         let teamState = null;
         let tournamentSchedule = [];
+        let activeMatchIndex = null;   // game_index of the active match, null when none
 
         const teamStream = new EventSource('/api/team_stream');
         teamStream.onmessage = (event) => applyTeamState(JSON.parse(event.data));
@@ -731,12 +732,17 @@
             });
         }
 
+        // Only touches the dropdown when the active match actually changes, so the
+        // operator can browse the next match while a game is running.
         function renderActiveMatch(active) {
+            const nextIndex = active ? active.game_index : null;
+            if (nextIndex === activeMatchIndex) return;
+            activeMatchIndex = nextIndex;
             if (active) {
                 matchInfo.textContent = `Aktiv: ${active.home} vs ${active.away}`;
                 matchInfo.className = 'match-info active';
                 matchSelect.value = String(active.game_index);
-            } else if (matchInfo.classList.contains('active')) {
+            } else {
                 matchInfo.textContent = 'Kein Spiel ausgewählt';
                 matchInfo.className = 'match-info';
             }

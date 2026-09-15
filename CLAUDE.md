@@ -19,7 +19,11 @@ py -3 app.py
 gunicorn app:app
 ```
 
-No tests exist in this project.
+```bash
+# Tests (pytest, dev-only dependency)
+py -3 -m pip install -r requirements-dev.txt
+py -3 -m pytest
+```
 
 ## Hosting
 
@@ -42,7 +46,7 @@ The app is hosted on **Render** (onrender.com). Key deployment facts:
 
 The display screen connects to `/api/stream` (Server-Sent Events). The server pushes a full state snapshot on every command. The control panel POSTs to `/api/send_command`, which updates `game_state`, increments `command_id`, and notifies all SSE subscribers immediately.
 
-The display is **phase-driven**, not command-driven: it compares `game_state.phase` (`wheel` → `spinning` → `result` → `wheel`) with what it is currently showing and transitions accordingly. The first SSE message after a (re)connect therefore restores the correct screen — a reload during the result phase shows the result again (with the full result duration re-armed), a reload mid-spin replays the spin. The display reports back with `spin_finished` (animation landed → winner disabled, phase `result`) and `result_finished` (result timer expired → phase `wheel`). Both are idempotent so two displays cannot conflict. `spin` is refused with 400 unless the phase is `wheel`, and the control panel disables the spin button accordingly.
+The display is **phase-driven**, not command-driven: it compares `game_state.phase` (`wheel` → `spinning` → `result` → `wheel`) with what it is currently showing and transitions accordingly. The first SSE message after a (re)connect therefore restores the correct screen — a reload during the result phase shows the result again (with the full result duration re-armed), a reload mid-spin replays the spin. The display reports back with `spin_finished` (animation landed → winner disabled, phase `result`) and `result_finished` (result timer expired → phase `wheel`). Both are idempotent so two displays cannot conflict. `spin` is refused with 400 while the phase is `result`, or while `spinning` for less than `SPIN_STALE_SECONDS` (20 s); after that a spinning phase with no acknowledgement is considered stale (no display open, callback lost) and a new spin is accepted. The control panel disables the spin button accordingly. The display re-sends a lost `spin_finished`/`result_finished` when it sees the server phase lagging behind its own, and `sendCommand` retries on network errors, so a flaky connection cannot wedge the wheel.
 
 SSE subscriber queues are **latest-wins**: every message is a full snapshot, so when a slow client's queue is full the oldest message is dropped, never the client.
 
@@ -54,6 +58,7 @@ SSE subscriber queues are **latest-wins**: every message is a full snapshot, so 
     "phase": "wheel",             # 'wheel' | 'spinning' | 'result' — drives the display
     "winner_index": None,         # Index into the active (non-disabled) image list, set on spin
     "winner_filename": None,      # Winner's filename, kept after it is disabled
+    "spin_started_at": None,      # time.time() of the last accepted spin (stale-spin detection)
     "scores": {"left": 0, "right": 0},
     "show_events": False,         # Whether the events popup is visible on display
     "disabled_events": [],        # Filenames removed from the wheel (winners + operator toggles)
@@ -72,7 +77,7 @@ SSE subscriber queues are **latest-wins**: every message is a full snapshot, so 
 **API actions** (`/api/send_command` POST, `action` field):
 | Action | Payload | Effect |
 |--------|---------|--------|
-| `spin` | — | Picks a winner, phase → `spinning` (400 unless phase is `wheel` or no events are active) |
+| `spin` | — | Picks a winner, phase → `spinning` (400 during `result`, during a fresh `spinning`, or with no active events) |
 | `spin_finished` | — | From the display: winner disabled, phase → `result` (no-op unless `spinning`) |
 | `result_finished` | — | From the display: phase → `wheel`, winner stays disabled |
 | `reset` | — | Re-enables all events, phase → `wheel` |
@@ -175,6 +180,8 @@ A second display flow for team-based play. Players self-register via QR code on 
 | `gunicorn.conf.py` | Forces single gevent worker — critical for Render deployment |
 | `Procfile` | Fallback start command (Render ignores this in favour of dashboard) |
 | `wheel_data.json` | Filename → display text mapping |
+| `tests/test_api.py` | pytest suite: caching, command ids, phase machine, SSE queue |
+| `requirements-dev.txt` | Dev-only dependencies (pytest) |
 | `team_data.json` | Team state persistence (players, teams, schedule, settings) |
 | `static/script.js` | Wheel display logic: draw, SSE handling, spin, timers, scores, events popup |
 | `static/style.css` | Wheel display screen styling |
