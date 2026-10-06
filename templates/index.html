@@ -14,6 +14,7 @@
 
     <!-- OVERLAYS (Always Visible) -->
     <div id="global-timer">00:00</div>
+    <div id="time-up-banner" class="hidden">Zeit abgelaufen</div>
 
     <div id="score-left" class="score-board">
         <div class="score-label">Heim</div>
@@ -33,6 +34,7 @@
             <div class="wheel-hub">
                 <img src="{{ url_for('static', filename='tg_logo.png') }}" alt="Logo">
             </div>
+            <div id="wheel-empty" class="wheel-empty hidden">Alle Ereignisse gespielt</div>
         </div>
     </div>
 

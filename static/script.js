@@ -9,6 +9,8 @@ const MIN_SPIN_ROTATIONS = 5;   // Full rotations before the random stop angle
 const RESULT_TICK_MS = 200;     // Result timer checks every 200ms to stay accurate
 const COMMAND_RETRIES = 3;      // attempts for display→server callbacks (spin_finished etc.)
 const COMMAND_RETRY_DELAY_MS = 1000;
+const ITEMS_RETRY_MS = 3000;    // retry delay when the wheel data request fails
+const TIME_UP_BANNER_MS = 5000; // how long "ZEIT ABGELAUFEN" stays on screen
 
 // Wheel geometry (canvas internal resolution is 600×600)
 const WHEEL_OUTER_R = 300;
@@ -54,9 +56,13 @@ const scoreLabelLeftEl  = document.querySelector('#score-left  .score-label');
 const scoreLabelRightEl = document.querySelector('#score-right .score-label');
 const eventsPopupEl = document.getElementById('events-popup');
 const eventsGridEl = document.getElementById('events-grid');
+const wheelEmptyEl = document.getElementById('wheel-empty');
+const timeUpBannerEl = document.getElementById('time-up-banner');
 
 // --- STATE ---
-let allItems = [];             // full item list, never filtered
+let allItems = [];             // full item list in server order, never filtered
+let loadedFilesKey = null;     // JSON of the filenames in allItems, compared to state.wheel_files
+let itemsLoading = false;
 let disabledEvents = new Set();
 let disabledEventsJson = '[]'; // used to detect changes in SSE updates
 let sectors = [];
@@ -65,7 +71,11 @@ let isSpinning = false;
 let localPhase = PHASE_WHEEL;   // what this screen is currently showing
 let localWinnerFilename = null; // winner this screen is spinning to / showing
 let awaitingRestore = true;     // true until the first message after each (re)connect
-let pendingState = null;        // state received before the wheel images finished loading
+let pendingState = null;        // latest state received while the wheel images were loading
+let pendingRestore = false;     // whether that pending state is the first after a (re)connect
+let eventsPopupShown = false;
+let lastGlobalSec = null;       // last game clock value shown, to detect it reaching zero
+let timeUpBannerTimeout = null;
 let resultTimerInterval = null;
 let resultTimerEndMs = null;
 let resultTimerRemaining = 0;          // seconds frozen when paused
@@ -85,6 +95,7 @@ let appConfig = {
 // --- CONFIGURATION ---
 // Two alternating sector colours — deep red / dark navy — match the UI tokens.
 const SECTOR_COLORS = ['#B03030', '#1C3455', '#FFFFFF'];
+const EMPTY_DISC_COLOR = '#24344a';  // wheel disc with no events / missing-image placeholder
 
 // --- 1. INITIALIZATION ---
 // SSE: The server pushes a full state snapshot on connect and after every command.
@@ -96,22 +107,7 @@ eventSource.onmessage = (event) => {
     handleStateUpdate(JSON.parse(event.data));
 };
 // EventSource reconnects automatically on error — no manual handling needed.
-
-fetch('/api/get_wheel_data')
-    .then(res => res.json())
-    .then(data => {
-        if (data.length === 0) return;
-        const loadPromises = data.map(item => new Promise(resolve => {
-            const img = new Image();
-            img.src = '/static/' + item.path;
-            img.onload = () => resolve({ imgObject: img, src: item.path, text: item.text });
-            img.onerror = () => resolve(null);
-        }));
-        Promise.all(loadPromises).then(loaded => {
-            initWheel(loaded.filter(i => i !== null));
-        });
-    })
-    .catch(err => console.error('Failed to load wheel data:', err));
+// The wheel images are loaded once the first state arrives (see handleStateUpdate).
 
 // Global timer display tick. The source of truth is globalTimerEndMs (set from server
 // data), so this interval only drives the UI and does not accumulate drift.
@@ -123,14 +119,40 @@ setInterval(() => {
 }, 1000);
 
 
-function initWheel(items) {
-    allItems = items;
-    rebuildWheel();
-    if (pendingState) {
-        const state = pendingState;
-        pendingState = null;
-        syncPhase(state, true);
-    }
+// Loads the wheel items so they match the server's list exactly. An image that fails
+// to load keeps its slot (drawn as a placeholder) — dropping it would make this
+// screen's wheel differ from the server's and land on the wrong event.
+function loadWheelItems() {
+    itemsLoading = true;
+    fetch('/api/get_wheel_data')
+        .then(res => res.json())
+        .then(data => Promise.all(data.map(loadItemImage)))
+        .then(items => {
+            allItems = items;
+            loadedFilesKey = JSON.stringify(items.map(filenameOf));
+            itemsLoading = false;
+            if (localPhase === PHASE_WHEEL) rebuildWheel();
+            if (pendingState) {
+                const state = pendingState;
+                const restore = pendingRestore;
+                pendingState = null;
+                pendingRestore = false;
+                applyPhase(state, restore);
+            }
+        })
+        .catch(err => {
+            console.error('Failed to load wheel data, retrying:', err);
+            setTimeout(loadWheelItems, ITEMS_RETRY_MS);
+        });
+}
+
+function loadItemImage(item) {
+    return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => resolve({ imgObject: img, src: item.path, text: item.text });
+        img.onerror = () => resolve({ imgObject: null, src: item.path, text: item.text });
+        img.src = '/static/' + item.path;
+    });
 }
 
 function filenameOf(item) {
@@ -139,8 +161,8 @@ function filenameOf(item) {
 
 function rebuildWheel() {
     const active = allItems.filter(item => !disabledEvents.has(filenameOf(item)));
-    if (active.length === 0) return;
-    const arcSize = (2 * Math.PI) / active.length;
+    wheelEmptyEl.classList.toggle('hidden', active.length > 0 || allItems.length === 0);
+    const arcSize = (2 * Math.PI) / Math.max(1, active.length);
     sectors = active.map((item, i) => ({
         imgObject: item.imgObject,
         src: '/static/' + item.src,
@@ -169,7 +191,13 @@ function drawWheel() {
     ctx.fillStyle = '#0d1520';
     ctx.fill();
 
-    // Layer 2: Sector fills up to discR
+    // Layer 2: Sector fills up to discR (a plain disc once every event has been played)
+    if (sectors.length === 0) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, discR, 0, Math.PI * 2);
+        ctx.fillStyle = EMPTY_DISC_COLOR;
+        ctx.fill();
+    }
     sectors.forEach((sector, i) => {
         ctx.beginPath();
         ctx.moveTo(cx, cy);
@@ -210,6 +238,11 @@ function drawWheel() {
         ctx.beginPath();
         ctx.arc(0, 0, IMG_RADIUS, 0, Math.PI * 2);
         ctx.clip();
+        if (!sector.imgObject) {
+            drawImagePlaceholder(sector.text, IMG_RADIUS);
+            ctx.restore();
+            return;
+        }
         const iw = sector.imgObject.naturalWidth;
         const ih = sector.imgObject.naturalHeight;
         const scale = Math.max(WHEEL_IMG_SIZE / iw, WHEEL_IMG_SIZE / ih);
@@ -257,6 +290,18 @@ function drawWheel() {
     ctx.fill();
 }
 
+// Stand-in for an image that failed to load: dark circle with the text's initial.
+// Drawn in the image's own (already translated and clipped) coordinate space.
+function drawImagePlaceholder(text, radius) {
+    ctx.fillStyle = EMPTY_DISC_COLOR;
+    ctx.fillRect(-radius, -radius, radius * 2, radius * 2);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `700 ${radius}px Inter, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText((text || '?').charAt(0).toUpperCase(), 0, 0);
+}
+
 
 // --- 2. STATE HANDLER ---
 function handleStateUpdate(data) {
@@ -275,6 +320,7 @@ function handleStateUpdate(data) {
             disabledEvents = new Set(data.disabled_events);
             // Redraw only while the wheel is showing; resetApp() rebuilds on return.
             if (allItems.length > 0 && localPhase === PHASE_WHEEL) rebuildWheel();
+            if (eventsPopupShown) renderEventsGrid();
         }
     }
 
@@ -287,16 +333,21 @@ function handleStateUpdate(data) {
         scoreLabelRightEl.textContent = 'Gast';
     }
 
-    if (data.show_events !== undefined) {
-        if (data.show_events) showEventsPopup();
-        else hideEventsPopup();
-    }
+    if (data.show_events !== undefined) setEventsPopupVisible(data.show_events);
 
     const restore = awaitingRestore;
     awaitingRestore = false;
-    if (allItems.length === 0) {
-        // Images still loading — remember the latest state and apply it in initWheel().
+    applyPhase(data, restore);
+}
+
+// Applies the phase once this screen's wheel matches the server's file list. While
+// the images (re)load, only the latest state is kept and applied when they are ready.
+function applyPhase(data, restore) {
+    const filesKey = JSON.stringify(data.wheel_files || []);
+    if (itemsLoading || filesKey !== loadedFilesKey) {
         pendingState = data;
+        pendingRestore = pendingRestore || restore;
+        if (!itemsLoading) loadWheelItems();
         return;
     }
     syncPhase(data, restore);
@@ -319,8 +370,8 @@ function syncPhase(data, restore) {
             }
             resetApp();                         // a new spin started while we showed a stale result
         }
-        if (localPhase === PHASE_WHEEL && data.winner_index != null) {
-            startSpinSequence(data.winner_index);
+        if (localPhase === PHASE_WHEEL && data.winner_filename) {
+            startSpinSequence(data.winner_filename);
         }
         return;
     }
@@ -388,6 +439,17 @@ function updateGlobalTimerUI(totalSec) {
     const m = Math.floor(totalSec / 60).toString().padStart(2, '0');
     const s = Math.floor(totalSec % 60).toString().padStart(2, '0');
     globalTimerEl.textContent = `${m}:${s}`;
+    const expired = totalSec <= 0;
+    globalTimerEl.classList.toggle('time-up', expired);
+    // Banner only when the clock is seen running out — not on a reload at 00:00.
+    if (expired && lastGlobalSec !== null && lastGlobalSec > 0) showTimeUpBanner();
+    lastGlobalSec = totalSec;
+}
+
+function showTimeUpBanner() {
+    timeUpBannerEl.classList.remove('hidden');
+    clearTimeout(timeUpBannerTimeout);
+    timeUpBannerTimeout = setTimeout(() => timeUpBannerEl.classList.add('hidden'), TIME_UP_BANNER_MS);
 }
 
 
@@ -413,12 +475,18 @@ function sendCommand(action, payload = {}, attempt = 1) {
 
 
 // --- 6. SPIN LOGIC ---
-function startSpinSequence(winningIndex) {
+// The winner is matched by filename, not by the server's index: an index is only
+// meaningful if both sides built exactly the same list.
+function startSpinSequence(winnerFilename) {
     if (sectors.length === 0 || isSpinning || wheelStage.classList.contains('hidden')) return;
-    if (winningIndex < 0 || winningIndex >= sectors.length) return;
+    const winningIndex = sectors.findIndex(s => s.filename === winnerFilename);
+    if (winningIndex < 0) {
+        console.error(`Winner ${winnerFilename} is not on this wheel`);
+        return;
+    }
     isSpinning = true;
     localPhase = PHASE_SPINNING;
-    localWinnerFilename = sectors[winningIndex].filename;
+    localWinnerFilename = winnerFilename;
     timerContent.classList.remove('pulse-red');
 
     // The server pre-selected the winning sector. The rotation distance is always
@@ -447,6 +515,7 @@ function startWinAnimation(winner) {
     localPhase = PHASE_RESULT;
     const rect = indicator.getBoundingClientRect();
     floatingImg.src = winner.src;
+    floatingImg.alt = winner.text || '';
     floatingImg.className = '';
     floatingImg.style.width = FLOAT_IMG_START_SIZE + 'px';
     floatingImg.style.height = FLOAT_IMG_START_SIZE + 'px';
@@ -492,18 +561,20 @@ function showResultDirect(filename) {
     winnerTextDisplay.classList.add('show');
     timerStage.classList.remove('hidden');
     armResultTimer();
-    if (appConfig.global_timer_running) startResultTimer();
 }
 
 
 // --- 6. RESULT TIMER ---
 
-// Called when the result screen appears. Displays the full duration but does NOT
-// start counting — waits for the global game timer to be started via START.
+// Called when the result screen appears. Counts down only while the global game clock
+// runs: starts at once if it already does (e.g. WEITER pressed during the spin
+// animation), otherwise waits for START.
 function armResultTimer() {
     resultTimerState = 'ready';
     resultTimerRemaining = appConfig.result_duration;
     updateResultTimerUI(resultTimerRemaining);
+    if (appConfig.global_timer_running) startResultTimer();
+    else timerContent.classList.add('paused');
 }
 
 // Starts (or resumes) the result timer countdown. Picks up from the frozen
@@ -512,6 +583,7 @@ function startResultTimer() {
     if (resultTimerInterval) clearInterval(resultTimerInterval);
     const fromSeconds = resultTimerState === 'paused' ? resultTimerRemaining : appConfig.result_duration;
     resultTimerState = 'running';
+    timerContent.classList.remove('paused');
     resultTimerEndMs = Date.now() + fromSeconds * 1000;
     updateResultTimerUI(fromSeconds);
 
@@ -542,6 +614,7 @@ function pauseResultTimer() {
     resultTimerRemaining = Math.max(0, Math.ceil((resultTimerEndMs - Date.now()) / 1000));
     resultTimerState = 'paused';
     timerContent.classList.remove('pulse-red');
+    timerContent.classList.add('paused');
     updateResultTimerUI(resultTimerRemaining);
 }
 
@@ -553,30 +626,32 @@ function updateResultTimerUI(seconds) {
 
 
 // --- 7. EVENTS POPUP ---
-function showEventsPopup() {
-    fetch('/api/get_wheel_data')
-        .then(r => r.json())
-        .then(items => {
-            eventsGridEl.innerHTML = '';
-            items.forEach(item => {
-                const card = document.createElement('div');
-                card.className = 'event-card';
-                const img = document.createElement('img');
-                img.src = '/static/' + item.path;
-                img.alt = '';
-                const text = document.createElement('div');
-                text.className = 'event-card-text';
-                text.textContent = item.text;
-                card.appendChild(img);
-                card.appendChild(text);
-                eventsGridEl.appendChild(card);
-            });
-            eventsPopupEl.classList.remove('hidden');
-        });
+// Rendered from the items already loaded for the wheel (kept in sync with the server's
+// file list), so there is no request that could resolve after the popup was hidden.
+function setEventsPopupVisible(show) {
+    if (show === eventsPopupShown) return;
+    eventsPopupShown = show;
+    if (show) renderEventsGrid();
+    eventsPopupEl.classList.toggle('hidden', !show);
 }
 
-function hideEventsPopup() {
-    eventsPopupEl.classList.add('hidden');
+// Events already played are dimmed so the audience sees what is left.
+function renderEventsGrid() {
+    eventsGridEl.innerHTML = '';
+    allItems.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'event-card';
+        card.classList.toggle('event-played', disabledEvents.has(filenameOf(item)));
+        const img = document.createElement('img');
+        img.src = '/static/' + item.src;
+        img.alt = '';
+        const text = document.createElement('div');
+        text.className = 'event-card-text';
+        text.textContent = item.text;
+        card.appendChild(img);
+        card.appendChild(text);
+        eventsGridEl.appendChild(card);
+    });
 }
 
 
@@ -596,7 +671,7 @@ function resetApp() {
     isSpinning = false;
     localPhase = PHASE_WHEEL;
     localWinnerFilename = null;
-    timerContent.classList.remove('pulse-red');
+    timerContent.classList.remove('pulse-red', 'paused');
     timerStage.classList.add('hidden');
     winnerTextDisplay.classList.remove('show');
     winnerTextDisplay.textContent = '';

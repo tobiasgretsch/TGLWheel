@@ -163,3 +163,107 @@ def test_stream_first_message_is_a_full_snapshot(client):
     for key in ("phase", "winner_index", "winner_filename", "scores", "config"):
         assert key in snapshot
     r.close()
+
+
+# ---------------------------------------------------------------- robustness
+def test_late_result_finished_cannot_abort_the_next_spin(client):
+    send(client, "spin")
+    send(client, "spin_finished")
+    send(client, "result_finished")
+    send(client, "spin")
+    _, body = send(client, "result_finished")   # lagging retry from a second display
+    assert body["state"]["phase"] == wheel.PHASE_SPINNING
+
+
+def test_operator_can_end_the_result_early(client):
+    send(client, "spin")
+    _, body = send(client, "spin_finished")
+    winner = body["state"]["winner_filename"]
+    _, body = send(client, "result_finished")
+    assert body["state"]["phase"] == wheel.PHASE_WHEEL
+    assert body["state"]["disabled_events"] == [winner]
+
+
+def test_spin_closes_the_events_popup(client):
+    send(client, "toggle_events")
+    _, body = send(client, "spin")
+    assert body["state"]["show_events"] is False
+
+
+def test_snapshot_lists_the_wheel_files(client):
+    assert status(client)["wheel_files"] == active_filenames()
+
+
+@pytest.mark.parametrize("payload", [{"side": "left", "change": "x"}, {"side": "middle", "change": 1}])
+def test_bad_score_payload_never_crashes(client, payload):
+    code, _ = send(client, "update_score", payload)
+    assert code in (200, 400)
+    assert status(client)["scores"] == {"left": 0, "right": 0}
+
+
+def test_null_payload_is_treated_as_empty(client):
+    r = client.post("/api/send_command", json={"action": "toggle_events", "payload": None})
+    assert r.status_code == 200
+
+
+def test_non_list_disabled_events_is_refused(client):
+    code, _ = send(client, "set_disabled_events", {"events": "TeamTor.png"})
+    assert code == 400
+
+
+# ---------------------------------------------------------------- game clock
+def test_expired_clock_is_reported_as_stopped(client, monkeypatch):
+    send(client, "set_timers", {"global_time": 60})
+    send(client, "control_global_timer", {"state": "start"})
+    started = wheel.game_state["config"]["global_timer_start"]
+    monkeypatch.setattr(wheel.time, "time", lambda: started + 61)
+    cfg = status(client)["config"]
+    assert cfg["global_timer_running"] is False and cfg["global_time_remaining"] == 0
+
+    code, body = send(client, "control_global_timer", {"state": "start"})
+    assert code == 400 and "abgelaufen" in body["message"]
+
+
+# ---------------------------------------------------------------- teams
+@pytest.fixture
+def teams(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(wheel, "TEAM_DATA_FILE", str(tmp_path / "team_data.json"))
+    monkeypatch.setattr(wheel, "team_state", wheel._default_team_state())
+    send(client, "set_active_match", {"game_index": -1})
+    return client
+
+
+def team_send(client, action, payload=None):
+    r = client.post("/api/team_command", json={"action": action, "payload": payload or {}})
+    return r.status_code, r.get_json()
+
+
+def register(client, *names):
+    for name in names:
+        client.post("/api/register_player", json={"name": name})
+
+
+def test_create_teams_with_too_few_players_is_refused(teams):
+    register(teams, "A", "B")
+    code, body = team_send(teams, "create_teams")
+    assert code == 400 and "Mindestens" in body["message"]
+    assert wheel.team_state["phase"] == "registration"
+
+
+def test_reshuffling_clears_the_active_match(teams):
+    register(teams, "A", "B", "C", "D")
+    team_send(teams, "update_settings", {"num_teams": 2})
+    team_send(teams, "create_teams")
+    send(teams, "set_active_match", {"game_index": 0})
+    assert status(teams)["active_match"] is not None
+
+    team_send(teams, "create_teams")
+    assert status(teams)["active_match"] is None
+
+
+def test_remove_player_after_team_creation_is_refused(teams):
+    register(teams, "A", "B")
+    team_send(teams, "update_settings", {"num_teams": 2})
+    team_send(teams, "create_teams")
+    code, _ = team_send(teams, "remove_player", {"id": wheel.team_state["players"][0]["id"]})
+    assert code == 400

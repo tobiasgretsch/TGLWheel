@@ -355,3 +355,83 @@ canvas {
     color: rgba(255, 255, 255, 0.9);
     line-height: 1.35;
 }
+
+/* ============================================================
+   EVENT PLAYED (dimmed in the events popup)
+   ============================================================ */
+.event-card.event-played {
+    opacity: 0.3;
+}
+
+/* ============================================================
+   EMPTY WHEEL (every event played)
+   ============================================================ */
+.wheel-empty {
+    position: absolute;
+    top: 72%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 15;
+    width: 70%;
+    font-size: var(--fs-winner);
+    font-weight: 700;
+    text-transform: uppercase;
+    text-align: center;
+    letter-spacing: 0.06em;
+    line-height: 1.2;
+    color: var(--color-text-muted);
+}
+
+.wheel-empty.hidden {
+    display: none;
+}
+
+/* ============================================================
+   RESULT TIMER PAUSED (waiting for the game clock)
+   ============================================================ */
+.timer-content.paused #timer-display {
+    opacity: 0.45;
+}
+
+.timer-content.paused::after {
+    content: 'Pausiert';
+    display: block;
+    margin-top: 6px;
+    font-size: var(--fs-label);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--color-text-muted);
+}
+
+/* ============================================================
+   GAME TIME UP
+   ============================================================ */
+#global-timer.time-up {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+    animation: pulse 0.8s infinite alternate;
+}
+
+#time-up-banner {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 900;
+    padding: var(--space-md) var(--space-lg);
+    font-size: var(--fs-timer-result);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+    color: var(--color-text);
+    background: var(--color-accent);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 0 60px var(--color-accent-glow), var(--shadow);
+    animation: pulse 0.6s infinite alternate;
+}
+
+#time-up-banner.hidden {
+    display: none;
+}

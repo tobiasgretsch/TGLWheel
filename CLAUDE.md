@@ -46,7 +46,9 @@ The app is hosted on **Render** (onrender.com). Key deployment facts:
 
 The display screen connects to `/api/stream` (Server-Sent Events). The server pushes a full state snapshot on every command. The control panel POSTs to `/api/send_command`, which updates `game_state`, increments `command_id`, and notifies all SSE subscribers immediately.
 
-The display is **phase-driven**, not command-driven: it compares `game_state.phase` (`wheel` → `spinning` → `result` → `wheel`) with what it is currently showing and transitions accordingly. The first SSE message after a (re)connect therefore restores the correct screen — a reload during the result phase shows the result again (with the full result duration re-armed), a reload mid-spin replays the spin. The display reports back with `spin_finished` (animation landed → winner disabled, phase `result`) and `result_finished` (result timer expired → phase `wheel`). Both are idempotent so two displays cannot conflict. `spin` is refused with 400 while the phase is `result`, or while `spinning` for less than `SPIN_STALE_SECONDS` (20 s); after that a spinning phase with no acknowledgement is considered stale (no display open, callback lost) and a new spin is accepted. The control panel disables the spin button accordingly. The display re-sends a lost `spin_finished`/`result_finished` when it sees the server phase lagging behind its own, and `sendCommand` retries on network errors, so a flaky connection cannot wedge the wheel.
+The display is **phase-driven**, not command-driven: it compares `game_state.phase` (`wheel` → `spinning` → `result` → `wheel`) with what it is currently showing and transitions accordingly. The first SSE message after a (re)connect therefore restores the correct screen — a reload during the result phase shows the result again (with the full result duration re-armed), a reload mid-spin replays the spin. The display reports back with `spin_finished` (animation landed → winner disabled, phase `result`) and `result_finished` (result timer expired → phase `wheel`). Both are idempotent and only act in their own phase (`spin_finished` only while `spinning`, `result_finished` only during `result`), so two displays or a late retry cannot conflict or abort the next spin. The display matches the winner by `winner_filename`, never by `winner_index`, and keeps its image list identical to the server's `wheel_files` (reloaded when it changes; an image that fails to load is drawn as a placeholder instead of being dropped). `spin` is refused with 400 while the phase is `result`, or while `spinning` for less than `SPIN_STALE_SECONDS` (20 s); after that a spinning phase with no acknowledgement is considered stale (no display open, callback lost) and a new spin is accepted. The control panel disables the spin button accordingly (and re-enables it as ERNEUT DREHEN once a spin looks stale). The display re-sends a lost `spin_finished`/`result_finished` when it sees the server phase lagging behind its own, and `sendCommand` retries on network errors, so a flaky connection cannot wedge the wheel.
+
+The result countdown only runs while the game clock runs (paused → shows "Pausiert"). The operator can end the result early with ERGEBNIS BEENDEN (`result_finished`). A game clock that reaches zero is reported as stopped (`_settle_global_timer`), START is refused until a new time is set, and the display shows a ZEIT ABGELAUFEN banner.
 
 SSE subscriber queues are **latest-wins**: every message is a full snapshot, so when a slow client's queue is full the oldest message is dropped, never the client.
 
@@ -63,8 +65,10 @@ SSE subscriber queues are **latest-wins**: every message is a full snapshot, so 
     "show_events": False,         # Whether the events popup is visible on display
     "disabled_events": [],        # Filenames removed from the wheel (winners + operator toggles)
     "active_match": None,         # {"game_index", "home", "away"} when a tournament match is active
+    "wheel_files": [...],         # snapshot only: current image filenames (clients reload on change)
     "config": {
         "result_duration": 60,        # Seconds the result screen stays visible
+        "global_time_total": 600,     # Last time set via set_timers (START vs WEITER)
         "global_time_remaining": 600, # Game timer in seconds (decremented server-side)
         "global_timer_running": False,
         "global_timer_start": None,   # time.time() when timer was last started
@@ -77,9 +81,9 @@ SSE subscriber queues are **latest-wins**: every message is a full snapshot, so 
 **API actions** (`/api/send_command` POST, `action` field):
 | Action | Payload | Effect |
 |--------|---------|--------|
-| `spin` | — | Picks a winner, phase → `spinning` (400 during `result`, during a fresh `spinning`, or with no active events) |
+| `spin` | — | Picks a winner, phase → `spinning`, hides the events popup (400 during `result`, during a fresh `spinning`, or with no active events) |
 | `spin_finished` | — | From the display: winner disabled, phase → `result` (no-op unless `spinning`) |
-| `result_finished` | — | From the display: phase → `wheel`, winner stays disabled |
+| `result_finished` | — | From the display (timer expired) or the operator (ERGEBNIS BEENDEN): phase → `wheel`, winner stays disabled; no-op outside `result` |
 | `reset` | — | Re-enables all events, phase → `wheel` |
 | `set_disabled_events` | `{events: [filename]}` | Replaces the disabled list (control panel checkboxes) |
 | `set_active_match` | `{game_index}` | Activates a tournament match, score labels show team names; `-1` clears |
@@ -97,7 +101,7 @@ SSE subscriber queues are **latest-wins**: every message is a full snapshot, so 
 - Images live in `static/wheel_images/` (`.png`, `.jpg`, `.jpeg`, `.gif`)
 - `wheel_data.json` maps filenames to display texts (e.g. `"TeamTor.png": "Jeder muss..."`)
 - If a filename has no entry in `wheel_data.json`, the filename (without extension) is used as the label
-- Adding/removing images or editing `wheel_data.json` takes effect immediately without a restart (read on each `/api/get_wheel_data` call)
+- Adding/removing images or editing `wheel_data.json` takes effect without a restart. Image changes reach the display and control panel with the next state snapshot (`wheel_files`); text edits on the next page load
 - **Maximum 9 events** — the events popup grid is designed for up to 9 items
 
 ### Wheel Rendering
@@ -155,7 +159,7 @@ A second display flow for team-based play. Players self-register via QR code on 
 **Team API actions** (`/api/team_command` POST, `action` field):
 | Action | Payload | Effect |
 |--------|---------|--------|
-| `create_teams` | — | Shuffle players into N teams (goalkeepers distributed first, one per team), generate round-robin schedule |
+| `create_teams` | — | Shuffle players into N teams (goalkeepers distributed first, one per team), generate round-robin schedule (400 with fewer players than teams) |
 | `reset_teams` | — | Clear teams + schedule, keep players, phase → `registration` |
 | `reset_all` | — | Clear everything, phase → `registration` |
 | `remove_player` | `{id}` | Remove player by UUID (registration phase only) |
@@ -169,6 +173,10 @@ A second display flow for team-based play. Players self-register via QR code on 
 | `/api/team_state` | GET | Returns current `team_state` snapshot |
 | `/api/team_stream` | GET | SSE stream for team state changes |
 | `/api/qr_code` | GET | Returns SVG QR code pointing to `/register` |
+
+Team handlers return an error string like game handlers (→ 400, nothing saved). `create_teams`, `reset_teams` and `reset_all` also clear the wheel's `active_match`, since its `game_index` would point into the replaced schedule.
+
+**Control panel layout:** sticky status bar (game clock, scores with team names, phase, active events, SSE connection dot) → LIVE (spin, ERGEBNIS BEENDEN, start/pause, score buttons) → Aktuelles Spiel → Rad (events popup, reset, event checklist) → Einstellungen (collapsed `<details>`: times, font sizes) → Turnier. Destructive buttons need a second tap within 3 s when they would destroy something (`CONFIRM_RULES`). Keyboard: Space = spin, ←/→ = +1 Heim/Gast (Shift = −1), P = start/pause. A screen wake lock keeps phones awake.
 
 **Control panel integration:** The control panel has a "TURNIER" panel with a button that opens a settings popup overlay. The popup loads/saves `num_teams` and `num_games` via `/api/team_command` with `update_settings`, and has a link to open `/teams` in a new tab.
 

@@ -143,6 +143,7 @@ game_state = {
     "active_match": None,  # {"game_index": 0, "home": "Team 1", "away": "Team 2"}
     "config": {
         "result_duration": 60,
+        "global_time_total": 600,      # last time set, so clients can tell START from WEITER
         "global_time_remaining": 600,
         "global_timer_running": False,
         "global_timer_start": None,
@@ -160,7 +161,18 @@ def _effective_remaining():
     return float(cfg["global_time_remaining"])
 
 
+def _settle_global_timer():
+    """A running clock that has reached zero is stopped, so every client sees it as
+    expired instead of 'running at 00:00' (and PAUSE/START make sense again)."""
+    cfg = game_state["config"]
+    if cfg["global_timer_running"] and _effective_remaining() <= 0:
+        cfg["global_time_remaining"] = 0
+        cfg["global_timer_running"] = False
+        cfg["global_timer_start"] = None
+
+
 def _state_snapshot():
+    _settle_global_timer()
     return {
         "command_id": game_state["command_id"],
         "command": game_state["command"],
@@ -171,6 +183,8 @@ def _state_snapshot():
         "show_events": game_state["show_events"],
         "disabled_events": list(game_state["disabled_events"]),
         "active_match": game_state["active_match"],
+        # Lets every client notice added/removed images without polling.
+        "wheel_files": [img["filename"] for img in get_images()],
         "config": {
             **game_state["config"],
             "global_time_remaining": _effective_remaining(),
@@ -353,6 +367,7 @@ def _handle_spin(payload):
     game_state["winner_filename"] = active[winner_index]["filename"]
     game_state["spin_started_at"] = time.time()
     game_state["phase"] = PHASE_SPINNING
+    game_state["show_events"] = False  # the audience must see the wheel turn
     cfg = game_state["config"]
     if cfg["global_timer_running"]:
         cfg["global_time_remaining"] = _effective_remaining()
@@ -362,9 +377,10 @@ def _handle_spin(payload):
 
 def _handle_update_score(payload):
     side = payload.get("side")
-    change = payload.get("change", 0)
-    if side in ("left", "right"):
-        game_state["scores"][side] = max(0, game_state["scores"][side] + change)
+    if side not in ("left", "right"):
+        return "Ungültige Seite"
+    change = _safe_int(payload.get("change"), 0)
+    game_state["scores"][side] = max(0, game_state["scores"][side] + change)
 
 
 def _handle_reset_scores(payload):
@@ -377,8 +393,9 @@ def _handle_set_timers(payload):
         game_state["config"]["result_duration"] = _safe_int(
             payload["result_duration"], game_state["config"]["result_duration"])
     if "global_time" in payload:
-        game_state["config"]["global_time_remaining"] = _safe_int(
-            payload["global_time"], game_state["config"]["global_time_remaining"])
+        total = _safe_int(payload["global_time"], game_state["config"]["global_time_total"])
+        game_state["config"]["global_time_total"] = total
+        game_state["config"]["global_time_remaining"] = total
         game_state["config"]["global_timer_running"] = False
         game_state["config"]["global_timer_start"] = None
 
@@ -412,12 +429,19 @@ def _handle_spin_finished(payload):
 
 
 def _handle_result_finished(payload):
-    """Sent by the display when the result timer expires. Keeps the winner disabled."""
+    """Sent by the display when the result timer expires, or by the operator to end
+    the result early. Keeps the winner disabled. A no-op outside the result phase so a
+    late retry from a lagging display cannot abort the next spin."""
+    if game_state["phase"] != PHASE_RESULT:
+        return None
     _enter_wheel_phase()
 
 
 def _handle_set_disabled_events(payload):
-    game_state["disabled_events"] = list(payload.get("events", []))
+    events = payload.get("events", [])
+    if not isinstance(events, list) or not all(isinstance(e, str) for e in events):
+        return "Ungültige Ereignisliste"
+    game_state["disabled_events"] = list(events)
 
 
 def _handle_toggle_events(payload):
@@ -433,6 +457,8 @@ def _handle_control_global_timer(payload):
     state = payload.get("state")
     cfg = game_state["config"]
     if state == "start" and not cfg["global_timer_running"]:
+        if cfg["global_time_remaining"] <= 0:
+            return "Spielzeit abgelaufen — bitte neue Spielzeit setzen"
         cfg["global_timer_running"] = True
         cfg["global_timer_start"] = time.time()
     elif state == "stop" and cfg["global_timer_running"]:
@@ -501,7 +527,7 @@ def _handle_create_teams(payload):
     players = team_state["players"]
     n = team_state["settings"]["num_teams"]
     if len(players) < n:
-        return
+        return f"Mindestens {n} Spieler nötig ({len(players)} registriert)"
 
     goalkeepers = [p for p in players if p.get("position") == "goalkeeper"]
     field_players = [p for p in players if p.get("position") != "goalkeeper"]
@@ -544,8 +570,10 @@ def _handle_reset_all(payload):
 
 def _handle_remove_player(payload):
     pid = payload.get("id")
-    if not pid or team_state["phase"] != "registration":
-        return
+    if not pid:
+        return "Kein Spieler gewählt"
+    if team_state["phase"] != "registration":
+        return "Spieler können nur vor der Teameinteilung entfernt werden"
     team_state["players"] = [p for p in team_state["players"] if p["id"] != pid]
 
 
@@ -558,12 +586,13 @@ def _handle_update_settings(payload):
 
 def _handle_update_match_score(payload):
     idx = _safe_int(payload.get("game_index"), -1)
-    if 0 <= idx < len(team_state["schedule"]):
-        match = team_state["schedule"][idx]
-        if "score_home" in payload:
-            match["score_home"] = _safe_int(payload["score_home"], match["score_home"])
-        if "score_away" in payload:
-            match["score_away"] = _safe_int(payload["score_away"], match["score_away"])
+    if not 0 <= idx < len(team_state["schedule"]):
+        return "Ungültiges Spiel"
+    match = team_state["schedule"][idx]
+    if "score_home" in payload:
+        match["score_home"] = _safe_int(payload["score_home"], match["score_home"])
+    if "score_away" in payload:
+        match["score_away"] = _safe_int(payload["score_away"], match["score_away"])
 
 
 _TEAM_ACTION_HANDLERS = {
@@ -574,6 +603,46 @@ _TEAM_ACTION_HANDLERS = {
     "update_settings":    _handle_update_settings,
     "update_match_score": _handle_update_match_score,
 }
+
+
+# Team actions that replace the schedule: a loaded match's game_index would then
+# point at a different pairing, so the active match is cleared.
+_SCHEDULE_REPLACING_ACTIONS = {"create_teams", "reset_teams", "reset_all"}
+
+
+def _error(message):
+    return jsonify({"status": "error", "message": message}), 400
+
+
+def _parse_command(handlers):
+    """Returns (action, handler, payload, None), or an error response as the last item."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return None, None, None, _error("Invalid JSON")
+    action = data.get("action")
+    if not action:
+        return None, None, None, _error("Missing action")
+    handler = handlers.get(action)
+    if handler is None:
+        return None, None, None, _error(f"Unknown action: {action}")
+    payload = data.get("payload")
+    return action, handler, payload if isinstance(payload, dict) else {}, None
+
+
+def _commit_game_command(action):
+    """Records a successful game command; caller holds _state_lock. Returns the snapshot."""
+    game_state["command_id"] = _next_command_id()
+    game_state["command"] = action
+    return _state_snapshot()
+
+
+def _clear_active_match():
+    with _state_lock:
+        if game_state["active_match"] is None:
+            return
+        game_state["active_match"] = None
+        snapshot = _commit_game_command("clear_active_match")
+    _game_sse.broadcast(snapshot)
 
 
 # ===================================================================
@@ -615,26 +684,16 @@ def check_status():
 
 @app.route("/api/send_command", methods=["POST"])
 def send_command():
-    data = request.json
-    if not data:
-        return jsonify({"status": "error", "message": "Invalid JSON"}), 400
-    action = data.get("action")
-    if not action:
-        return jsonify({"status": "error", "message": "Missing action"}), 400
-
-    handler = _ACTION_HANDLERS.get(action)
-    if handler is None:
-        return jsonify({"status": "error", "message": f"Unknown action: {action}"}), 400
-
-    payload = data.get("payload", {})
+    action, handler, payload, error_response = _parse_command(_ACTION_HANDLERS)
+    if error_response:
+        return error_response
 
     with _state_lock:
+        _settle_global_timer()  # so e.g. START sees an expired clock as stopped
         error = handler(payload)
         if error:
-            return jsonify({"status": "error", "message": error}), 400
-        game_state["command_id"] = _next_command_id()
-        game_state["command"] = action
-        snapshot = _state_snapshot()
+            return _error(error)
+        snapshot = _commit_game_command(action)
 
     _game_sse.broadcast(snapshot)
     return jsonify({"status": "success", "state": snapshot})
@@ -685,25 +744,22 @@ def get_team_state():
 
 @app.route("/api/team_command", methods=["POST"])
 def team_command():
-    data = request.json
-    if not data:
-        return jsonify({"status": "error", "message": "Invalid JSON"}), 400
-    action = data.get("action")
-    if not action:
-        return jsonify({"status": "error", "message": "Missing action"}), 400
-
-    handler = _TEAM_ACTION_HANDLERS.get(action)
-    if handler is None:
-        return jsonify({"status": "error", "message": f"Unknown action: {action}"}), 400
-
-    payload = data.get("payload", {})
+    action, handler, payload, error_response = _parse_command(_TEAM_ACTION_HANDLERS)
+    if error_response:
+        return error_response
 
     with _team_lock:
-        handler(payload)
+        error = handler(payload)
+        if error:
+            return _error(error)
         _save_team_state()
         snapshot = _team_state_snapshot()
 
     _team_sse.broadcast(snapshot)
+    # Taken after releasing _team_lock: _handle_set_active_match locks state → team,
+    # so locking team → state here could deadlock.
+    if action in _SCHEDULE_REPLACING_ACTIONS:
+        _clear_active_match()
     return jsonify({"status": "success", "state": snapshot})
 
 
