@@ -1,5 +1,6 @@
 """API-level tests for the wheel: caching, command ids, the phase machine and the
 SSE queue. Run with `py -3 -m pytest` from the project root."""
+import io
 import json
 import os
 import sys
@@ -267,3 +268,81 @@ def test_remove_player_after_team_creation_is_refused(teams):
     team_send(teams, "create_teams")
     code, _ = team_send(teams, "remove_player", {"id": wheel.team_state["players"][0]["id"]})
     assert code == 400
+
+
+# ---------------------------------------------------------------- wheel events
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+
+@pytest.fixture
+def wheel_dir(client, tmp_path, monkeypatch):
+    """Points the wheel at an empty temp folder so tests never touch the real images."""
+    images = tmp_path / "wheel_images"
+    images.mkdir()
+    monkeypatch.setattr(wheel, "IMAGE_FOLDER", str(images))
+    monkeypatch.setattr(wheel, "DATA_FILE", str(tmp_path / "wheel_data.json"))
+    return images
+
+
+def add_event(client, text="Neues Ereignis", data=PNG_BYTES, name="Tor.png"):
+    r = client.post("/api/events", data={"text": text, "image": (io.BytesIO(data), name)},
+                    content_type="multipart/form-data")
+    return r.status_code, r.get_json()
+
+
+def test_added_event_is_saved_and_broadcast(wheel_dir, client):
+    before = status(client)
+    code, body = add_event(client, text="Nur mit links werfen", name="Linke Hand.png")
+    assert code == 200 and body["filename"] == "Linke_Hand.png"
+    assert (wheel_dir / "Linke_Hand.png").read_bytes() == PNG_BYTES
+    assert json.loads((wheel_dir.parent / "wheel_data.json").read_text(encoding="utf-8")) == \
+        {"Linke_Hand.png": "Nur mit links werfen"}
+    after = status(client)
+    assert after["wheel_files"] == ["Linke_Hand.png"]
+    assert after["command_id"] > before["command_id"]
+    assert after["wheel_signature"] != before["wheel_signature"]
+
+
+def test_type_comes_from_content_not_name(wheel_dir, client):
+    code, body = add_event(client, name="foto.gif", data=b"\xff\xd8\xff\xe0" + b"\x00" * 16)
+    assert code == 200 and body["filename"] == "foto.jpg"
+
+
+def test_non_image_upload_is_refused(wheel_dir, client):
+    code, body = add_event(client, data=b"<script>alert(1)</script>", name="x.png")
+    assert code == 400 and "PNG" in body["message"]
+    assert list(wheel_dir.iterdir()) == []
+
+
+def test_duplicate_names_get_a_suffix(wheel_dir, client):
+    add_event(client, name="Tor.png")
+    _, body = add_event(client, name="tor.png")
+    assert body["filename"] == "tor-2.png"
+
+
+@pytest.mark.parametrize("text", ["", "   ", "x" * 201])
+def test_event_text_is_validated(wheel_dir, client, text):
+    code, _ = add_event(client, text=text)
+    assert code == 400
+
+
+def test_event_limit(wheel_dir, client):
+    for i in range(wheel.MAX_WHEEL_EVENTS):
+        assert add_event(client, name=f"e{i}.png")[0] == 200
+    code, body = add_event(client, name="zuviel.png")
+    assert code == 400 and "Maximal" in body["message"]
+
+
+def test_event_text_can_be_edited(wheel_dir, client):
+    add_event(client, text="Alt", name="Tor.png")
+    signature = status(client)["wheel_signature"]
+    r = client.put("/api/events/Tor.png", json={"text": "Neu"})
+    assert r.status_code == 200
+    assert wheel.get_images()[0]["text"] == "Neu"
+    assert status(client)["wheel_signature"] != signature
+
+
+def test_editing_an_unknown_event_is_refused(wheel_dir, client):
+    r = client.put("/api/events/gibtsnicht.png", json={"text": "Neu"})
+    assert r.status_code == 404
+    assert not (wheel_dir.parent / "wheel_data.json").exists()

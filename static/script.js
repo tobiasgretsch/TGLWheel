@@ -61,7 +61,7 @@ const timeUpBannerEl = document.getElementById('time-up-banner');
 
 // --- STATE ---
 let allItems = [];             // full item list in server order, never filtered
-let loadedFilesKey = null;     // JSON of the filenames in allItems, compared to state.wheel_files
+let loadedSignature = null;    // state.wheel_signature that allItems was loaded for
 let itemsLoading = false;
 let disabledEvents = new Set();
 let disabledEventsJson = '[]'; // used to detect changes in SSE updates
@@ -122,16 +122,18 @@ setInterval(() => {
 // Loads the wheel items so they match the server's list exactly. An image that fails
 // to load keeps its slot (drawn as a placeholder) — dropping it would make this
 // screen's wheel differ from the server's and land on the wrong event.
-function loadWheelItems() {
+// The data is fetched after the snapshot carrying `signature`, so it is at least that new.
+function loadWheelItems(signature) {
     itemsLoading = true;
     fetch('/api/get_wheel_data')
         .then(res => res.json())
         .then(data => Promise.all(data.map(loadItemImage)))
         .then(items => {
             allItems = items;
-            loadedFilesKey = JSON.stringify(items.map(filenameOf));
+            loadedSignature = signature;
             itemsLoading = false;
             if (localPhase === PHASE_WHEEL) rebuildWheel();
+            if (eventsPopupShown) renderEventsGrid();
             if (pendingState) {
                 const state = pendingState;
                 const restore = pendingRestore;
@@ -142,7 +144,7 @@ function loadWheelItems() {
         })
         .catch(err => {
             console.error('Failed to load wheel data, retrying:', err);
-            setTimeout(loadWheelItems, ITEMS_RETRY_MS);
+            setTimeout(() => loadWheelItems(signature), ITEMS_RETRY_MS);
         });
 }
 
@@ -340,14 +342,13 @@ function handleStateUpdate(data) {
     applyPhase(data, restore);
 }
 
-// Applies the phase once this screen's wheel matches the server's file list. While
-// the images (re)load, only the latest state is kept and applied when they are ready.
+// Applies the phase once this screen's events match the server's (same images and
+// texts). While they (re)load, only the latest state is kept and applied when ready.
 function applyPhase(data, restore) {
-    const filesKey = JSON.stringify(data.wheel_files || []);
-    if (itemsLoading || filesKey !== loadedFilesKey) {
+    if (itemsLoading || data.wheel_signature !== loadedSignature) {
         pendingState = data;
         pendingRestore = pendingRestore || restore;
-        if (!itemsLoading) loadWheelItems();
+        if (!itemsLoading) loadWheelItems(data.wheel_signature);
         return;
     }
     syncPhase(data, restore);

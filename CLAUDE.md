@@ -65,7 +65,8 @@ SSE subscriber queues are **latest-wins**: every message is a full snapshot, so 
     "show_events": False,         # Whether the events popup is visible on display
     "disabled_events": [],        # Filenames removed from the wheel (winners + operator toggles)
     "active_match": None,         # {"game_index", "home", "away"} when a tournament match is active
-    "wheel_files": [...],         # snapshot only: current image filenames (clients reload on change)
+    "wheel_files": [...],         # snapshot only: current image filenames
+    "wheel_signature": "…",       # snapshot only: hash of filenames + texts; clients reload events on change
     "config": {
         "result_duration": 60,        # Seconds the result screen stays visible
         "global_time_total": 600,     # Last time set via set_timers (START vs WEITER)
@@ -101,8 +102,14 @@ SSE subscriber queues are **latest-wins**: every message is a full snapshot, so 
 - Images live in `static/wheel_images/` (`.png`, `.jpg`, `.jpeg`, `.gif`)
 - `wheel_data.json` maps filenames to display texts (e.g. `"TeamTor.png": "Jeder muss..."`)
 - If a filename has no entry in `wheel_data.json`, the filename (without extension) is used as the label
-- Adding/removing images or editing `wheel_data.json` takes effect without a restart. Image changes reach the display and control panel with the next state snapshot (`wheel_files`); text edits on the next page load
-- **Maximum 9 events** — the events popup grid is designed for up to 9 items
+- Adding/removing images or editing `wheel_data.json` takes effect without a restart. Changes reach the display and control panel with the next state snapshot (`wheel_signature`)
+- **Maximum 12 events** (`MAX_WHEEL_EVENTS`) — beyond that the 82 px images no longer fit on the wheel; the events popup grid adapts to any count
+- **Adding from the control panel:** "+ EREIGNIS HINZUFÜGEN" (image + text) and ✎ per event (edit text). The browser scales the image to max 512 px and re-encodes it as PNG/JPEG (handles iPhone HEIC); the server checks the type by magic bytes, makes the filename ASCII-safe and unique, and writes `wheel_data.json` atomically. **Stored on the local filesystem only — on Render, added events and text edits are lost on the next deploy/restart.** Permanent events still go into the repo via Git.
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/events` | POST | multipart `image` + `text` → new event (400: no/invalid image, empty or >200 char text, limit reached; 413: >5 MB) |
+| `/api/events/<filename>` | PUT | `{text}` → change an event's text (404 if unknown) |
 
 ### Wheel Rendering
 

@@ -213,6 +213,67 @@
             opacity: 0.38;
         }
 
+        /* --- EVENT ROW (toggle + edit button) --- */
+        .event-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .event-row .event-check-item {
+            flex: 1;
+            min-width: 0;
+            margin-bottom: 0;
+        }
+        .btn-edit {
+            flex: 0 0 44px;
+            padding: 0;
+            font-size: 1.1rem;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid var(--color-border);
+        }
+
+        /* --- EVENT EDITOR --- */
+        .image-pick {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            min-height: 120px;
+            margin-bottom: 14px;
+            padding: 14px;
+            border: 2px dashed var(--color-border);
+            border-radius: var(--radius-sm);
+            color: var(--color-text);
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .image-pick:hover { border-color: var(--btn-blue); }
+        .image-pick img {
+            width: 96px;
+            height: 96px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+        textarea {
+            width: 100%;
+            padding: 10px 12px;
+            font-size: 1rem;
+            font-family: inherit;
+            color: var(--color-text);
+            background: rgba(255,255,255,0.08);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-sm);
+            outline: none;
+            resize: vertical;
+        }
+        textarea:focus { border-color: rgba(255,255,255,0.35); }
+        .popup-note {
+            margin: 10px 0 0;
+            font-size: 0.75rem;
+            color: var(--color-text-muted);
+        }
+
         /* --- POPUP OVERLAY --- */
         .popup-overlay {
             position: fixed;
@@ -231,7 +292,8 @@
             pointer-events: auto;
         }
         .popup-card {
-            background: var(--color-surface);
+            /* Opaque: the translucent surface alone let the page show through. */
+            background: linear-gradient(var(--color-surface), var(--color-surface)), var(--color-bg);
             border: 1px solid var(--color-border);
             border-radius: var(--radius-lg, 18px);
             padding: 28px 24px;
@@ -370,6 +432,7 @@
             opacity: 0;
             transition: opacity 0.25s;
             pointer-events: none;
+            z-index: 900;   /* above popups, so errors while editing are visible */
         }
 
         #status-msg.show { opacity: 1; }
@@ -579,6 +642,7 @@
                 <button class="btn-orange" data-action="reset">RAD ZURÜCKSETZEN</button>
             </div>
             <div id="events-checklist"></div>
+            <button class="btn-blue btn-full" data-action="add-event">+ EREIGNIS HINZUFÜGEN</button>
         </section>
 
         <!-- EINSTELLUNGEN (collapsed: rarely needed during play) -->
@@ -645,6 +709,27 @@
         </section>
     </div>
 
+    <!-- EVENT EDITOR POPUP (add / edit text) -->
+    <div id="event-popup" class="popup-overlay">
+        <div class="popup-card">
+            <button class="popup-close" data-action="close-event-editor">&times;</button>
+            <h2 id="eventPopupTitle">Neues Ereignis</h2>
+            <div id="eventImageField">
+                <label class="image-pick">
+                    <img id="eventImagePreview" alt="" hidden>
+                    <span id="eventImageHint">Bild auswählen</span>
+                    <input type="file" id="eventImageInput" accept="image/*" hidden>
+                </label>
+            </div>
+            <textarea id="eventTextInput" rows="3" maxlength="200"
+                      placeholder="Was gilt bei diesem Ereignis?"></textarea>
+            <p class="popup-note">Wird nur auf dem Server gespeichert und geht beim nächsten Deploy verloren. Dauerhaft über Git ins Repo übernehmen.</p>
+            <div class="popup-actions">
+                <button class="btn-green" id="eventSaveBtn" data-action="save-event">SPEICHERN</button>
+            </div>
+        </div>
+    </div>
+
     <!-- TOURNAMENT SETTINGS POPUP -->
     <div id="tournament-popup" class="popup-overlay">
         <div class="popup-card">
@@ -672,6 +757,10 @@
         const CLOCK_TICK_MS = 250;        // status bar clock / button refresh
         const CONFIRM_WINDOW_MS = 3000;   // second tap must follow within this time
         const STATUS_TOAST_MS = 2000;
+        // New event images are scaled to this edge length before upload (the wheel draws
+        // them at 82 px, the events popup at up to 200 px).
+        const MAX_EVENT_IMAGE_PX = 512;
+        const EVENT_JPEG_QUALITY = 0.88;
         const SIZE_STEP_REM = 0.5;
         const TIMER_SIZE_MIN = 1.0, TIMER_SIZE_MAX = 12.0;
         const SCORE_SIZE_MIN = 1.0, SCORE_SIZE_MAX = 20.0;
@@ -727,7 +816,10 @@
         // --- STATE ---
         let gameState = null;          // latest snapshot from /api/stream
         let teamState = null;          // latest snapshot from /api/team_stream
-        let loadedFilesKey = null;     // wheel_files the checklist was built from
+        let loadedSignature = null;    // wheel_signature the checklist was built from
+        let wheelItems = [];           // events as listed in the checklist
+        let editingFilename = null;    // event being edited, null when adding a new one
+        let eventImageBlob = null;     // scaled image chosen for a new event
         let clockEndMs = null;         // Date.now() + remaining while the game clock runs
         let spinningSinceMs = null;    // when this panel first saw the current spin
         let spinPending = false;       // spin request in flight
@@ -877,12 +969,11 @@
 
         // --- Event checklist (rebuilt when images are added/removed on the server) ---
         function syncEventChecklist(data) {
-            const filesKey = JSON.stringify(data.wheel_files || []);
-            if (filesKey === loadedFilesKey) {
+            if (data.wheel_signature === loadedSignature) {
                 syncCheckboxes();
                 return;
             }
-            loadedFilesKey = filesKey;
+            loadedSignature = data.wheel_signature;
             loadEventChecklist();
         }
 
@@ -899,11 +990,26 @@
             fetch('/api/get_wheel_data')
                 .then(r => r.json())
                 .then(items => {
-                    const container = $('events-checklist');
-                    container.replaceChildren(...items.map(buildEventCheckItem));
+                    wheelItems = items;
+                    $('events-checklist').replaceChildren(...items.map(buildEventRow));
                     syncCheckboxes();
                 })
-                .catch(() => { loadedFilesKey = null; });   // retried on the next snapshot
+                .catch(() => { loadedSignature = null; });   // retried on the next snapshot
+        }
+
+        // One checklist row: the toggle (label) plus an edit button outside the label,
+        // so tapping ✎ does not also flip the checkbox.
+        function buildEventRow(item) {
+            const row = document.createElement('div');
+            row.className = 'event-row';
+            const edit = document.createElement('button');
+            edit.className = 'btn-edit';
+            edit.dataset.action = 'edit-event';
+            edit.dataset.filename = item.filename;
+            edit.textContent = '✎';
+            edit.setAttribute('aria-label', 'Text bearbeiten');
+            row.append(buildEventCheckItem(item), edit);
+            return row;
         }
 
         function buildEventCheckItem(item) {
@@ -950,22 +1056,26 @@
         }
 
         // Resolves with the response body on success, or null on failure (already reported).
+        function sendRequest(url, options, successMessage) {
+            return fetch(url, options)
+                .then(res => res.ok ? res.json() : throwServerError(res))
+                .then(body => {
+                    if (successMessage) showStatus(true, successMessage);
+                    return body;
+                })
+                .catch(err => {
+                    // fetch() rejects with a TypeError when the server is unreachable.
+                    showStatus(false, err instanceof TypeError ? 'Keine Verbindung zum Server' : err.message);
+                    return null;
+                });
+        }
+
         function postCommand(url, action, payload, messages) {
-            return fetch(url, {
+            return sendRequest(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action, payload })
-            })
-            .then(res => res.ok ? res.json() : throwServerError(res))
-            .then(body => {
-                if (messages[action]) showStatus(true, messages[action]);
-                return body;
-            })
-            .catch(err => {
-                // fetch() rejects with a TypeError when the server is unreachable.
-                showStatus(false, err instanceof TypeError ? 'Keine Verbindung zum Server' : err.message);
-                return null;
-            });
+            }, messages[action]);
         }
 
         // Applies the returned state right away so the panel reacts even if SSE lags.
@@ -1144,10 +1254,97 @@
             closeTournament();
         }
 
-        // Close popup on overlay click (not on card click)
-        tournamentPopup.addEventListener('click', (e) => {
-            if (e.target === tournamentPopup) closeTournament();
+        // Close a popup on overlay click (not on card click)
+        document.querySelectorAll('.popup-overlay').forEach(popup => {
+            popup.addEventListener('click', (e) => {
+                if (e.target === popup) popup.classList.remove('visible');
+            });
         });
+
+        // --- EVENT EDITOR (add a new event / edit an event's text) ---
+        const eventPopup = $('event-popup');
+
+        function openEventEditor(filename) {
+            const item = filename ? wheelItems.find(i => i.filename === filename) : null;
+            if (filename && !item) return;
+            editingFilename = filename;
+            eventImageBlob = null;
+            $('eventPopupTitle').textContent = item ? 'Ereignis bearbeiten' : 'Neues Ereignis';
+            $('eventImageField').hidden = !!item;   // the image of an existing event stays
+            $('eventImageInput').value = '';
+            $('eventImagePreview').hidden = true;
+            $('eventImageHint').textContent = 'Bild auswählen';
+            $('eventTextInput').value = item ? item.text : '';
+            eventPopup.classList.add('visible');
+            if (item) $('eventTextInput').focus();
+        }
+
+        function closeEventEditor() {
+            eventPopup.classList.remove('visible');
+        }
+
+        // Scales the photo down in the browser before upload: keeps uploads small on
+        // mobile data and turns formats the server does not take (e.g. iPhone HEIC)
+        // into PNG/JPEG. PNG/GIF stay PNG so transparency survives.
+        function scaleImage(file) {
+            return createImageBitmap(file).then(bitmap => {
+                const scale = Math.min(1, MAX_EVENT_IMAGE_PX / Math.max(bitmap.width, bitmap.height));
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.round(bitmap.width * scale);
+                canvas.height = Math.round(bitmap.height * scale);
+                canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                const keepsAlpha = file.type === 'image/png' || file.type === 'image/gif';
+                const type = keepsAlpha ? 'image/png' : 'image/jpeg';
+                return new Promise((resolve, reject) => canvas.toBlob(
+                    blob => blob ? resolve(blob) : reject(new Error('Bild konnte nicht umgewandelt werden')),
+                    type, EVENT_JPEG_QUALITY));
+            });
+        }
+
+        $('eventImageInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            scaleImage(file)
+                .then(blob => {
+                    eventImageBlob = blob;
+                    const preview = $('eventImagePreview');
+                    URL.revokeObjectURL(preview.src);
+                    preview.src = URL.createObjectURL(blob);
+                    preview.hidden = false;
+                    $('eventImageHint').textContent = 'Anderes Bild wählen';
+                })
+                .catch(() => showStatus(false, 'Bild konnte nicht gelesen werden'));
+        });
+
+        function uploadNewEvent(text) {
+            const form = new FormData();
+            const ext = eventImageBlob.type === 'image/png' ? '.png' : '.jpg';
+            const stem = (($('eventImageInput').files[0] || {}).name || 'ereignis').replace(/\.[^.]*$/, '');
+            form.append('image', eventImageBlob, stem + ext);
+            form.append('text', text);
+            return sendRequest('/api/events', { method: 'POST', body: form }, 'Ereignis hinzugefügt');
+        }
+
+        function updateEventText(filename, text) {
+            return sendRequest(`/api/events/${encodeURIComponent(filename)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            }, 'Text gespeichert');
+        }
+
+        function saveEvent() {
+            const text = $('eventTextInput').value.trim();
+            if (!text) { showStatus(false, 'Bitte einen Text eingeben'); return; }
+            if (!editingFilename && !eventImageBlob) { showStatus(false, 'Bitte ein Bild auswählen'); return; }
+            const saveBtn = $('eventSaveBtn');
+            saveBtn.disabled = true;
+            const request = editingFilename ? updateEventText(editingFilename, text) : uploadNewEvent(text);
+            request.then(body => {
+                saveBtn.disabled = false;
+                if (body) closeEventEditor();   // on error the popup stays open with the input
+            });
+        }
 
         // =================================================================
         // INPUT: confirm-by-second-tap, click delegation, keyboard
@@ -1200,6 +1397,10 @@
                 case 'open-tournament':     return openTournament();
                 case 'close-tournament':    return closeTournament();
                 case 'save-tournament':     return saveTournament();
+                case 'add-event':           return openEventEditor(null);
+                case 'edit-event':          return openEventEditor(btn.dataset.filename);
+                case 'save-event':          return saveEvent();
+                case 'close-event-editor':  return closeEventEditor();
             }
         }
 
@@ -1217,7 +1418,7 @@
         document.addEventListener('keydown', (e) => {
             if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || !gameState) return;
             if (e.target.closest('input, select, textarea, button, a')) return;
-            if (tournamentPopup.classList.contains('visible')) return;
+            if (document.querySelector('.popup-overlay.visible')) return;
             const change = e.shiftKey ? -1 : 1;
             switch (e.key) {
                 case ' ':

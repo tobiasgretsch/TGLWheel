@@ -1,3 +1,4 @@
+import hashlib
 import io
 import os
 import json
@@ -11,6 +12,7 @@ import segno
 from flask import (Flask, render_template, jsonify, request,
                    Response, stream_with_context)
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
@@ -47,6 +49,21 @@ PHASE_RESULT = "result"      # result screen visible, winner disabled
 # for this long (no display open, callback lost), the phase is stale and a new
 # spin is allowed rather than forcing the operator to reset the whole wheel.
 SPIN_STALE_SECONDS = 20
+
+# Events added from the control panel. Beyond 12 the 82 px images no longer fit
+# side by side on the 600 px wheel. Uploads are scaled down in the browser first,
+# so the byte limit only guards against misuse.
+MAX_WHEEL_EVENTS = 12
+MAX_EVENT_TEXT_LENGTH = 200
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
+# The file type is taken from the content, never from the uploaded name.
+_IMAGE_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    (b"\xff\xd8\xff", ".jpg"),
+    (b"GIF87a", ".gif"),
+    (b"GIF89a", ".gif"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +190,7 @@ def _settle_global_timer():
 
 def _state_snapshot():
     _settle_global_timer()
+    images = get_images()
     return {
         "command_id": game_state["command_id"],
         "command": game_state["command"],
@@ -183,8 +201,9 @@ def _state_snapshot():
         "show_events": game_state["show_events"],
         "disabled_events": list(game_state["disabled_events"]),
         "active_match": game_state["active_match"],
-        # Lets every client notice added/removed images without polling.
-        "wheel_files": [img["filename"] for img in get_images()],
+        # Lets every client notice added/removed images and edited texts without polling.
+        "wheel_files": [img["filename"] for img in images],
+        "wheel_signature": _wheel_signature(images),
         "config": {
             **game_state["config"],
             "global_time_remaining": _effective_remaining(),
@@ -199,13 +218,7 @@ def get_images():
         f for f in os.listdir(IMAGE_FOLDER)
         if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS
     )
-    custom_texts = {}
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            try:
-                custom_texts = json.load(f)
-            except json.JSONDecodeError:
-                pass
+    custom_texts = _read_wheel_texts()
     return [
         {
             "filename": filename,
@@ -214,6 +227,31 @@ def get_images():
         }
         for filename in files
     ]
+
+
+def _read_wheel_texts():
+    if not os.path.exists(DATA_FILE):
+        return {}
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        try:
+            texts = json.load(f)
+        except json.JSONDecodeError:
+            return {}
+    return texts if isinstance(texts, dict) else {}
+
+
+def _write_json_atomic(path, data, indent):
+    """Writes via a temp file so a crash never leaves a half-written file behind."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=indent)
+    os.replace(tmp, path)
+
+
+def _wheel_signature(images):
+    """Changes whenever an image or a text changes, so clients know to reload."""
+    content = json.dumps([[img["filename"], img["text"]] for img in images], ensure_ascii=False)
+    return hashlib.sha1(content.encode("utf-8")).hexdigest()[:12]
 
 
 # ---------------------------------------------------------------------------
@@ -252,10 +290,7 @@ def _load_team_state():
 
 
 def _save_team_state():
-    tmp = TEAM_DATA_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(team_state, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, TEAM_DATA_FILE)
+    _write_json_atomic(TEAM_DATA_FILE, team_state, indent=2)
 
 
 # Load persisted state on startup
@@ -636,6 +671,44 @@ def _commit_game_command(action):
     return _state_snapshot()
 
 
+_wheel_data_lock = threading.Lock()
+
+
+def _validate_event_text(text):
+    if not text:
+        return "Bitte einen Text eingeben"
+    if len(text) > MAX_EVENT_TEXT_LENGTH:
+        return f"Text zu lang (max. {MAX_EVENT_TEXT_LENGTH} Zeichen)"
+    return None
+
+
+def _detect_image_extension(data):
+    for signature, ext in _IMAGE_SIGNATURES:
+        if data.startswith(signature):
+            return ext
+    return None
+
+
+def _unique_image_filename(stem, ext):
+    """ASCII-safe filename that does not collide with an existing image
+    (compared case-insensitively, as on Windows)."""
+    stem = secure_filename(stem) or "ereignis"
+    existing = {f.lower() for f in os.listdir(IMAGE_FOLDER)}
+    candidate = stem + ext
+    suffix = 2
+    while candidate.lower() in existing:
+        candidate = f"{stem}-{suffix}{ext}"
+        suffix += 1
+    return candidate
+
+
+def _broadcast_wheel_change():
+    """Pushes a snapshot with the new wheel_signature so every screen reloads its events."""
+    with _state_lock:
+        snapshot = _commit_game_command("update_events")
+    _game_sse.broadcast(snapshot)
+
+
 def _clear_active_match():
     with _state_lock:
         if game_state["active_match"] is None:
@@ -697,6 +770,59 @@ def send_command():
 
     _game_sse.broadcast(snapshot)
     return jsonify({"status": "success", "state": snapshot})
+
+
+@app.route("/api/events", methods=["POST"])
+def add_event():
+    """Adds a wheel event from the control panel: multipart `image` + `text`."""
+    text = (request.form.get("text") or "").strip()
+    error = _validate_event_text(text)
+    if error:
+        return _error(error)
+    upload = request.files.get("image")
+    if upload is None:
+        return _error("Bitte ein Bild auswählen")
+    data = upload.read()
+    ext = _detect_image_extension(data)
+    if ext is None:
+        return _error("Nur PNG-, JPG- oder GIF-Bilder")
+
+    with _wheel_data_lock:
+        if len(get_images()) >= MAX_WHEEL_EVENTS:
+            return _error(f"Maximal {MAX_WHEEL_EVENTS} Ereignisse auf dem Rad")
+        filename = _unique_image_filename(os.path.splitext(upload.filename or "")[0], ext)
+        with open(os.path.join(IMAGE_FOLDER, filename), "wb") as f:
+            f.write(data)
+        texts = _read_wheel_texts()
+        texts[filename] = text
+        _write_json_atomic(DATA_FILE, texts, indent=4)
+
+    _broadcast_wheel_change()
+    return jsonify({"status": "success", "filename": filename})
+
+
+@app.route("/api/events/<filename>", methods=["PUT"])
+def update_event_text(filename):
+    data = request.get_json(silent=True)
+    text = (data.get("text") or "").strip() if isinstance(data, dict) else ""
+    error = _validate_event_text(text)
+    if error:
+        return _error(error)
+
+    with _wheel_data_lock:
+        if filename not in {img["filename"] for img in get_images()}:
+            return jsonify({"status": "error", "message": "Ereignis nicht gefunden"}), 404
+        texts = _read_wheel_texts()
+        texts[filename] = text
+        _write_json_atomic(DATA_FILE, texts, indent=4)
+
+    _broadcast_wheel_change()
+    return jsonify({"status": "success"})
+
+
+@app.errorhandler(413)
+def upload_too_large(_error_obj):
+    return _error(f"Bild zu groß (max. {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)")
 
 
 @app.route("/api/stream")
