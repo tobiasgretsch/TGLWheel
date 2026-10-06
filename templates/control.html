@@ -299,6 +299,35 @@
         }
         .btn-link:hover { opacity: 0.8; }
 
+        /* --- PAGE LINKS (teams display, registration) --- */
+        .page-links {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .page-link {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            padding: 12px 14px;
+            border-radius: var(--radius-sm);
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--color-border);
+            color: var(--color-text);
+            text-decoration: none;
+            transition: border-color 0.15s;
+        }
+        .page-link:hover { border-color: var(--btn-blue); }
+        .page-link-title {
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+        .page-link-url {
+            font-size: 0.85rem;
+            color: var(--btn-blue);
+            overflow-wrap: anywhere;
+        }
+
         /* --- MATCH SELECTOR --- */
         .match-select {
             width: 100%;
@@ -585,6 +614,17 @@
         <!-- TURNIER -->
         <section class="panel">
             <h2>Turnier</h2>
+            <div class="page-links">
+                <a class="page-link" href="/teams" target="_blank" rel="noopener">
+                    <span class="page-link-title">Teamanzeige (Beamer)</span>
+                    <span class="page-link-url">/teams</span>
+                </a>
+                <a class="page-link" href="/register" target="_blank" rel="noopener">
+                    <span class="page-link-title">Spieler-Anmeldung (Handy)</span>
+                    <span class="page-link-url">/register</span>
+                </a>
+            </div>
+            <hr>
             <div class="row">
                 <button class="btn-green" data-action="create-teams">TEAMS ERSTELLEN</button>
                 <button class="btn-orange" data-action="reshuffle-teams">NEU MISCHEN</button>
@@ -1202,6 +1242,11 @@
 
         // Keep a phone's screen on while the panel is open. Not supported everywhere
         // (needs HTTPS or localhost); the panel works without it.
+        // Show each page link's full address so it can be read out or typed on another device.
+        document.querySelectorAll('.page-link').forEach(link => {
+            link.querySelector('.page-link-url').textContent = link.href;
+        });
+
         function keepScreenAwake() {
             if (!('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
             navigator.wakeLock.request('screen').catch(() => {});
